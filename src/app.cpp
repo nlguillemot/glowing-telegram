@@ -25,6 +25,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 1;
     }
 
+    if (RendererHandleEvent(hWnd, msg, wParam, lParam))
+    {
+        return 1;
+    }
+
     switch (msg)
     {
     case WM_SIZE:

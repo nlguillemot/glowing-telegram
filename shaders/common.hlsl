@@ -7,6 +7,11 @@ struct PerCameraData
     float4 WorldPosition;
 };
 
+struct PerViewportData
+{
+    float4 Size;
+};
+
 struct PerMaterialData
 {
     float4 Ambient;
@@ -45,6 +50,9 @@ struct PerSceneNodeData
 #define SSAO_NORMAL_SAMPLER_SLOT 0
 #define SSAO_DEPTH_SAMPLER_SLOT 1
 #define SSAO_NOISE_SAMPLER_SLOT 2
+
+#define SELECTOR_CAMERA_BUFFER_SLOT 0
+#define SELECTOR_SCENENODE_BUFFER_SLOT 1
 
 #define BUFFER_REGISTER(slot) b##slot
 #define TEXTURE_REGISTER(slot) t##slot

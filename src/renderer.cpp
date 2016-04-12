@@ -317,6 +317,11 @@ void RendererResize(
     SceneResize(windowWidth, windowHeight, renderWidth, renderHeight);
 }
 
+bool RendererHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    return SceneHandleEvent(hWnd, msg, wParam, lParam);
+}
+
 static void RendererShowSystemInfoGUI()
 {
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiSetCond_Always);

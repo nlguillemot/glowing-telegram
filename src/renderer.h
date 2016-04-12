@@ -28,6 +28,8 @@ void RendererResize(
     int windowWidth, int windowHeight, 
     int renderWidth, int renderHeight);
 
+bool RendererHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 void RendererPaint();
 
 ID3D11Device* RendererGetDevice();

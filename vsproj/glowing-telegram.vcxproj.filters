@@ -14,6 +14,7 @@
     <ClCompile Include="..\src\scene.cpp" />
     <ClCompile Include="..\src\stb_image.c" />
     <ClCompile Include="..\src\tiny_obj_loader.cc" />
+    <ClCompile Include="..\src\par_shapes.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\app.h" />
@@ -31,6 +32,7 @@
     <ClInclude Include="..\src\stb_textedit.h" />
     <ClInclude Include="..\src\stb_truetype.h" />
     <ClInclude Include="..\src\tiny_obj_loader.h" />
+    <ClInclude Include="..\src\par_shapes.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="shaders">
@@ -38,16 +40,19 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="..\shaders\scene.hlsl">
-      <Filter>shaders</Filter>
-    </FxCompile>
-    <FxCompile Include="..\shaders\common.hlsl">
-      <Filter>shaders</Filter>
-    </FxCompile>
-  </ItemGroup>
-  <ItemGroup>
     <None Include="..\shaders\ssao.hlsl">
       <Filter>shaders</Filter>
     </None>
+    <None Include="..\shaders\common.hlsl">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="..\shaders\scene.hlsl">
+      <Filter>shaders</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="..\shaders\selector.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
   </ItemGroup>
 </Project>

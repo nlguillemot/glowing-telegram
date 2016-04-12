@@ -84,6 +84,7 @@
     <ClCompile Include="..\src\imgui_draw.cpp" />
     <ClCompile Include="..\src\imgui_impl_dx11.cpp" />
     <ClCompile Include="..\src\main.cpp" />
+    <ClCompile Include="..\src\par_shapes.cpp" />
     <ClCompile Include="..\src\renderer.cpp" />
     <ClCompile Include="..\src\scene.cpp" />
     <ClCompile Include="..\src\stb_image.c" />
@@ -98,6 +99,7 @@
     <ClInclude Include="..\src\imgui.h" />
     <ClInclude Include="..\src\imgui_impl_dx11.h" />
     <ClInclude Include="..\src\imgui_internal.h" />
+    <ClInclude Include="..\src\par_shapes.h" />
     <ClInclude Include="..\src\renderer.h" />
     <ClInclude Include="..\src\scene.h" />
     <ClInclude Include="..\src\stb_image.h" />
@@ -114,6 +116,11 @@
       <FileType>Document</FileType>
     </None>
     <None Include="..\shaders\ssao.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\shaders\selector.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>

@@ -8,6 +8,7 @@
 #include "imgui.h"
 #include "tiny_obj_loader.h"
 #include "stb_image.h"
+#include "par_shapes.h"
 
 #include <DirectXMath.h>
 
@@ -161,8 +162,19 @@ struct Scene
     Shader* SSAOVS;
     Shader* SSAOPS;
 
+    ComPtr<ID3D11InputLayout> pSelectorSphereInputLayout;
+    ComPtr<ID3D11RasterizerState> pSelectorRasterizerState;
+    ComPtr<ID3D11DepthStencilState> pSelectorDepthStencilState;
+    ComPtr<ID3D11BlendState> pSelectorBlendState;
+
+    Shader* SelectorVS;
+    Shader* SelectorGS;
+    Shader* SelectorPS;
+
     uint64_t LastTicks;
     int LastMouseX, LastMouseY;
+
+    int DragVertexID;
 };
 
 Scene g_Scene;
@@ -542,7 +554,9 @@ void SceneInit()
     ID3D11Device* dev = RendererGetDevice();
 
     std::vector<std::string> meshesToLoad = {
-        "dragon"
+        // "dragon"
+        "teapot"
+        // "indorelax"
     };
 
     std::vector<int> newStaticMeshIDs;
@@ -562,8 +576,11 @@ void SceneInit()
     g_Scene.ScenePS = RendererAddShader("scene.hlsl", "PSmain", "ps_5_0");
     g_Scene.SSAOVS = RendererAddShader("ssao.hlsl", "VSmain", "vs_5_0");
     g_Scene.SSAOPS = RendererAddShader("ssao.hlsl", "PSmain", "ps_5_0");
+    g_Scene.SelectorVS = RendererAddShader("selector.hlsl", "VSmain", "vs_5_0");
+    g_Scene.SelectorGS = RendererAddShader("selector.hlsl", "GSmain", "gs_5_0");
+    g_Scene.SelectorPS = RendererAddShader("selector.hlsl", "PSmain", "ps_5_0");
 
-    XMStoreFloat3(&g_Scene.CameraPos, XMVectorSet(-0.5f, 0.5f, -0.5f, 1.0f));
+    XMStoreFloat3(&g_Scene.CameraPos, XMVectorSet(-100.0f, 100.0f, -100.0f, 1.0f));
     XMStoreFloat3(&g_Scene.CameraLook, XMVector3Normalize(XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f) - XMLoadFloat3(&g_Scene.CameraPos)));
 
     CD3D11_SAMPLER_DESC sceneNormalSamplerDesc(D3D11_DEFAULT);
@@ -614,7 +631,7 @@ void SceneInit()
     bumpSamplerDesc.MaxAnisotropy = 8;
     CHECKHR(dev->CreateSamplerState(&bumpSamplerDesc, &g_Scene.pBumpSampler));
 
-    D3D11_INPUT_ELEMENT_DESC sceneInputElements[] = {
+    D3D11_INPUT_ELEMENT_DESC sceneInputElementDescs[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 1, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
         { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 2, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
@@ -622,7 +639,7 @@ void SceneInit()
         { "BITANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 4, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
     };
     CHECKHR(dev->CreateInputLayout(
-        sceneInputElements, _countof(sceneInputElements),
+        sceneInputElementDescs, _countof(sceneInputElementDescs),
         g_Scene.SceneVS->Blob->GetBufferPointer(), g_Scene.SceneVS->Blob->GetBufferSize(),
         &g_Scene.pSceneInputLayout));
 
@@ -653,30 +670,31 @@ void SceneInit()
     // Noise texture (for SSAO)
     {
         int noiseSize = 64;
-        std::vector<XMFLOAT3> noiseData(noiseSize * noiseSize);
+        std::vector<XMFLOAT4> noiseData(noiseSize * noiseSize);
         std::random_device rd;
         std::mt19937 gen(rd());
         std::normal_distribution<float> d(0.0f, 1.0f);
-        for (XMFLOAT3& noise : noiseData)
+        for (XMFLOAT4& noise : noiseData)
         {
             noise.x = d(gen);
             noise.y = d(gen);
             noise.z = d(gen);
+            noise.w = d(gen);
         }
         
         D3D11_SUBRESOURCE_DATA noiseInitialData = {};
         noiseInitialData.pSysMem = noiseData.data();
-        noiseInitialData.SysMemPitch = noiseSize * sizeof(XMFLOAT3);
-        noiseInitialData.SysMemSlicePitch = noiseSize * noiseSize * sizeof(XMFLOAT3);
+        noiseInitialData.SysMemPitch = noiseSize * sizeof(XMFLOAT4);
+        noiseInitialData.SysMemSlicePitch = noiseSize * noiseSize * sizeof(XMFLOAT4);
         
         CHECKHR(dev->CreateTexture2D(
-            &CD3D11_TEXTURE2D_DESC(DXGI_FORMAT_R32G32B32_FLOAT, noiseSize, noiseSize, 1, 1, D3D11_BIND_SHADER_RESOURCE),
+            &CD3D11_TEXTURE2D_DESC(DXGI_FORMAT_R32G32B32A32_FLOAT, noiseSize, noiseSize, 1, 1, D3D11_BIND_SHADER_RESOURCE),
             &noiseInitialData,
             &g_Scene.pSSAONoiseTexture));
 
         CHECKHR(dev->CreateShaderResourceView(
             g_Scene.pSSAONoiseTexture.Get(),
-            &CD3D11_SHADER_RESOURCE_VIEW_DESC(D3D11_SRV_DIMENSION_TEXTURE2D, DXGI_FORMAT_R32G32B32_FLOAT, 0, 1),
+            &CD3D11_SHADER_RESOURCE_VIEW_DESC(D3D11_SRV_DIMENSION_TEXTURE2D, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 1),
             &g_Scene.pSSAONoiseSRV));
 
         CD3D11_SAMPLER_DESC noiseSamplerDesc(D3D11_DEFAULT);
@@ -686,8 +704,32 @@ void SceneInit()
         CHECKHR(dev->CreateSamplerState(&noiseSamplerDesc, &g_Scene.pSSAONoiseSampler));
     }
 
+    // Selector
+    {
+        D3D11_INPUT_ELEMENT_DESC selectorInputElementDescs[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        };
+
+        CHECKHR(dev->CreateInputLayout(
+            selectorInputElementDescs, _countof(selectorInputElementDescs),
+            g_Scene.SelectorVS->Blob->GetBufferPointer(), g_Scene.SelectorVS->Blob->GetBufferSize(),
+            &g_Scene.pSelectorSphereInputLayout));
+
+        D3D11_RASTERIZER_DESC selectorRasterizerDesc = CD3D11_RASTERIZER_DESC(D3D11_DEFAULT);
+        selectorRasterizerDesc.CullMode = D3D11_CULL_NONE;
+        CHECKHR(dev->CreateRasterizerState(&selectorRasterizerDesc, &g_Scene.pSelectorRasterizerState));
+
+        D3D11_DEPTH_STENCIL_DESC selectorDepthStencilDesc = CD3D11_DEPTH_STENCIL_DESC(D3D11_DEFAULT);
+        CHECKHR(dev->CreateDepthStencilState(&selectorDepthStencilDesc, &g_Scene.pSelectorDepthStencilState));
+
+        D3D11_BLEND_DESC selectorBlendDesc = CD3D11_BLEND_DESC(D3D11_DEFAULT);
+        CHECKHR(dev->CreateBlendState(&selectorBlendDesc, &g_Scene.pSelectorBlendState));
+    }
+
     g_Scene.LastMouseX = INT_MIN;
     g_Scene.LastMouseY = INT_MIN;
+
+    g_Scene.DragVertexID = -1;
 }
 
 void SceneResize(
@@ -727,6 +769,15 @@ void SceneResize(
         &g_Scene.pSceneNormalSRV));
 
     g_Scene.SceneViewport = CD3D11_VIEWPORT(0.0f, 0.0f, (FLOAT)renderWidth, (FLOAT)renderHeight);
+}
+
+bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_LBUTTONDOWN)
+    {
+
+    }
+    return false;
 }
 
 static void SceneShowToolboxGUI()
@@ -778,25 +829,29 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         float activated = GetAsyncKeyState(VK_RBUTTON) ? 1.0f : 0.0f;
         float up[3] = { 0.0f, 1.0f, 0.0f };
         XMFLOAT4X4 worldView;
-        flythrough_camera_update(
-            &g_Scene.CameraPos.x,
-            &g_Scene.CameraLook.x,
-            up,
-            &worldView.m[0][0],
-            deltaTicks / (float)ticksPerSecond,
-            1.0f * (GetAsyncKeyState(VK_LSHIFT) ? 3.0f : 1.0f) * activated,
-            0.5f * activated,
-            80.0f,
-            currMouseX - g_Scene.LastMouseX, currMouseY - g_Scene.LastMouseY,
-            GetAsyncKeyState('W'), GetAsyncKeyState('A'), GetAsyncKeyState('S'), GetAsyncKeyState('D'),
-            GetAsyncKeyState(VK_SPACE), GetAsyncKeyState(VK_LCONTROL),
-            FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
+        if (activated)
+            flythrough_camera_update(
+                &g_Scene.CameraPos.x,
+                &g_Scene.CameraLook.x,
+                up,
+                &worldView.m[0][0],
+                deltaTicks / (float)ticksPerSecond,
+                100.0f * (GetAsyncKeyState(VK_LSHIFT) ? 3.0f : 1.0f) * activated,
+                0.5f * activated,
+                80.0f,
+                currMouseX - g_Scene.LastMouseX, currMouseY - g_Scene.LastMouseY,
+                GetAsyncKeyState('W'), GetAsyncKeyState('A'), GetAsyncKeyState('S'), GetAsyncKeyState('D'),
+                GetAsyncKeyState(VK_SPACE), GetAsyncKeyState(VK_LCONTROL),
+                FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
+        else
+            flythrough_camera_look_to(&g_Scene.CameraPos.x, &g_Scene.CameraLook.x, up, &worldView.m[0][0], FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
+
 
         D3D11_MAPPED_SUBRESOURCE mappedCamera;
         CHECKHR(dc->Map(g_Scene.pCameraBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera));
 
         float aspectWbyH = g_Scene.SceneViewport.Width / g_Scene.SceneViewport.Height;
-        XMMATRIX viewProjection = XMMatrixPerspectiveFovLH(XMConvertToRadians(90.0f), aspectWbyH, 0.0001f, 20.0f);
+        XMMATRIX viewProjection = XMMatrixPerspectiveFovLH(XMConvertToRadians(90.0f), aspectWbyH, 1.0f, 5000.0f);
         XMMATRIX worldViewProjection = XMMatrixMultiply(XMLoadFloat4x4(&worldView), viewProjection);
 
         PerCameraData* camera = (PerCameraData*)mappedCamera.pData;
@@ -961,6 +1016,8 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         }
 
         dc->OMSetRenderTargets(0, NULL, NULL);
+        dc->VSSetShader(NULL, NULL, 0);
+        dc->PSSetShader(NULL, NULL, 0);
     }
 
     // SSAO pass
@@ -1006,6 +1063,71 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         dc->PSSetShaderResources(SSAO_NOISE_TEXTURE_SLOT, 1, &nullSRV);
 
         dc->OMSetRenderTargets(0, NULL, NULL);
+        dc->VSSetShader(NULL, NULL, 0);
+        dc->PSSetShader(NULL, NULL, 0);
+    }
+
+    // Draw selection markers
+    if (!g_Scene.SceneNodes.empty() &&
+        g_Scene.SceneNodes[0].Type == SCENENODETYPE_STATICMESH) // assuming first scenenode is the model
+    {
+        ID3D11RenderTargetView* selectorRTVs[] = { pBackBufferRTV };
+        ID3D11DepthStencilView* selectorDSV = g_Scene.pSceneDepthDSV.Get();
+        dc->OMSetRenderTargets(_countof(selectorRTVs), selectorRTVs, selectorDSV);
+
+        const SceneNode& sceneNode = g_Scene.SceneNodes[0];
+        const StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
+
+        dc->IASetInputLayout(g_Scene.pSelectorSphereInputLayout.Get());
+        dc->RSSetState(g_Scene.pSelectorRasterizerState.Get());
+        dc->OMSetDepthStencilState(g_Scene.pSelectorDepthStencilState.Get(), 0);
+        dc->OMSetBlendState(g_Scene.pSelectorBlendState.Get(), NULL, UINT_MAX);
+        dc->RSSetViewports(1, &g_Scene.SceneViewport);
+
+        dc->VSSetShader(g_Scene.SelectorVS->VS, NULL, 0);
+        dc->GSSetShader(g_Scene.SelectorGS->GS, NULL, 0);
+        dc->PSSetShader(g_Scene.SelectorPS->PS, NULL, 0);
+
+        ID3D11Buffer* cameraCBV = g_Scene.pCameraBuffer.Get();
+        dc->VSSetConstantBuffers(SELECTOR_CAMERA_BUFFER_SLOT, 1, &cameraCBV);
+
+        // SceneNode CBV
+        {
+            D3D11_MAPPED_SUBRESOURCE mapped;
+            dc->Map(g_Scene.pSceneNodeBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+
+            PerSceneNodeData* sceneNodeData = (PerSceneNodeData*)mapped.pData;
+
+            XMMATRIX worldMatrix = XMMatrixIdentity();
+            worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixScalingFromVector(sceneNode.Transform.Scale));
+            worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixRotationQuaternion(sceneNode.Transform.Quaternion));
+            worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixTranslationFromVector(sceneNode.Transform.Translation));
+            XMStoreFloat4x4(&sceneNodeData->WorldTransform, XMMatrixTranspose(worldMatrix));
+
+            XMMATRIX normalMatrix = XMMatrixIdentity();
+            normalMatrix = XMMatrixMultiply(normalMatrix, XMMatrixScalingFromVector(XMVectorReciprocal(sceneNode.Transform.Scale)));
+            normalMatrix = XMMatrixMultiply(normalMatrix, XMMatrixRotationQuaternion(sceneNode.Transform.Quaternion));
+            XMStoreFloat4x4(&sceneNodeData->NormalTransform, XMMatrixTranspose(normalMatrix));
+
+            dc->Unmap(g_Scene.pSceneNodeBuffer.Get(), 0);
+
+            ID3D11Buffer* sceneNodeCBV = g_Scene.pSceneNodeBuffer.Get();
+            dc->VSSetConstantBuffers(SELECTOR_SCENENODE_BUFFER_SLOT, 1, &sceneNodeCBV);
+        }
+
+        ID3D11Buffer* selectorBuffers[] = { staticMesh.pPositionVertexBuffer.Get() };
+        UINT selectorStrides[] = { sizeof(VertexPosition) };
+        UINT selectorOffsets[] = { 0 };
+        dc->IASetVertexBuffers(0, _countof(selectorBuffers), selectorBuffers, selectorStrides, selectorOffsets);
+        dc->IASetIndexBuffer(staticMesh.pIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+        dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+        dc->DrawIndexed(staticMesh.IndexCountPerInstance, staticMesh.StartIndexLocation, 0);
+
+        dc->OMSetRenderTargets(0, NULL, NULL);
+
+        dc->VSSetShader(NULL, NULL, 0);
+        dc->GSSetShader(NULL, NULL, 0);
+        dc->PSSetShader(NULL, NULL, 0);
     }
 
     g_Scene.LastTicks = currTicks;
