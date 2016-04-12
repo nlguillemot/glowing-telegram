@@ -26,9 +26,9 @@ SamplerState NoiseSampler : register(SAMPLER_REGISTER(SSAO_NOISE_SAMPLER_SLOT));
 
 // SSAO parameters
 static const float SSAO_Strength = 0.125;
-static const float2 SSAO_Offset = float2(1280.0 / 4.0, 720.0 / 4.0);
-static const float SSAO_Falloff = 0.000002;
-static const float SSAO_Radius = 0.06;
+static const float2 SSAO_Offset = float2(1280.0, 720.0) / 32.0;
+static const float SSAO_Falloff = 0.0002;
+static const float SSAO_Radius = 0.4;
 
 #define NUM_SAMPLES 10
 static const float SSAO_InvSamples = 1.0 / (float)NUM_SAMPLES;
@@ -67,6 +67,8 @@ VSOut VSmain(VSIn input)
 // http://www.justinmclaine.com/shader---ssao.html
 PSOut PSmain(VSOut input)
 {
+    PSOut output;
+
     float depth = DepthTexture.Sample(DepthSampler, input.TexCoord).x;
     if (depth == 1.0)
     {
@@ -90,16 +92,15 @@ PSOut PSmain(VSOut input)
         ray = radD * reflect(AO_SAMPLES[i], fres);
         
         float2 sampleLoc = input.TexCoord.xy + sign(dot(ray, normal)) * ray.xy;
+
         sampleNormal = NormalTexture.Sample(NormalSampler, sampleLoc).xyz;
         depthDiff = depth - DepthTexture.Sample(DepthSampler, sampleLoc).x;
-
+        
         bl += step(SSAO_Falloff, depthDiff) * (1.0 - dot(sampleNormal, normal)) *
             (1.0 - smoothstep(SSAO_Falloff, SSAO_Strength, depthDiff));
     }
 
     float ao = bl * SSAO_InvSamples;
-    
-    PSOut output;
     output.Occlusion = float3(ao, ao, ao);
     return output;
 }

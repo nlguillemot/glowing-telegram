@@ -19,6 +19,15 @@ struct VSOut
     float3 WorldBitangent : WORLDBITANGENT;
 };
 
+struct GSOut
+{
+    VSOut vs;
+
+    nointerpolation float4 EdgePlane0 : EDGEPLANE0;
+    nointerpolation float4 EdgePlane1 : EDGEPLANE1;
+    nointerpolation float4 EdgePlane2 : EDGEPLANE2;
+};
+
 struct PSOut
 {
     float4 Color : SV_Target0;
@@ -61,9 +70,41 @@ VSOut VSmain(VSIn input)
     return output;
 }
 
-PSOut PSmain(VSOut input)
+[maxvertexcount(3)]
+void GSmain(triangle VSOut input[3], inout TriangleStream<GSOut> output)
+{
+    float3 genN = normalize(cross(input[1].WorldPosition - input[0].WorldPosition, input[2].WorldPosition - input[0].WorldPosition));
+
+    GSOut gs;
+    float3 n0 = normalize(cross(genN, input[1].WorldPosition - input[0].WorldPosition));
+    float3 n1 = normalize(cross(genN, input[2].WorldPosition - input[1].WorldPosition));
+    float3 n2 = normalize(cross(genN, input[0].WorldPosition - input[2].WorldPosition));
+    gs.EdgePlane0 = float4(n0, -dot(input[0].WorldPosition, n0));
+    gs.EdgePlane1 = float4(n1, -dot(input[1].WorldPosition, n1));
+    gs.EdgePlane2 = float4(n2, -dot(input[2].WorldPosition, n2));
+
+    [unroll]
+    for (int i = 0; i < 3; i++)
+    {
+        VSOut vs = input[i];
+        if (SceneNode.AutoGenNormals.x != 0.0)
+        {
+            vs.WorldNormal = genN;
+        }
+
+        gs.vs = vs;
+        output.Append(gs);
+    }
+    output.RestartStrip();
+}
+
+static const float kWireframeThickness = 0.001;
+
+PSOut PSmain(GSOut gs)
 {
     PSOut output;
+
+    VSOut input = gs.vs;
     
     float4 diffuseMap;
     if (Material.HasDiffuse.x)
@@ -112,6 +153,12 @@ PSOut PSmain(VSOut input)
     
     output.Color = float4(ambient.xyz + diffuse.xyz + specular.xyz, 1.0);
     output.Normal = N;
+
+    float dist = min(dot(gs.EdgePlane0, float4(P, 1)), min(dot(gs.EdgePlane1, float4(P, 1)), dot(gs.EdgePlane2, float4(P, 1))));
+    if (dist < kWireframeThickness)
+    {
+        output.Color *= float4((dist / kWireframeThickness).xxx, 0);
+    }
 
     return output;
 }

@@ -5,6 +5,8 @@ struct PerCameraData
 {
     float4x4 WorldViewProjection;
     float4 WorldPosition;
+    float4 LookDirection;
+    float4 Up;
 };
 
 struct PerViewportData
@@ -29,6 +31,7 @@ struct PerSceneNodeData
 {
     float4x4 WorldTransform;
     float4x4 NormalTransform;
+    float4 AutoGenNormals;
 };
 
 #define SCENE_CAMERA_BUFFER_SLOT 0

@@ -20,15 +20,8 @@ IMGUI_API LRESULT ImGui_ImplDX11_WndProcHandler(HWND hWnd, UINT msg, WPARAM wPar
 
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    if (ImGui_ImplDX11_WndProcHandler(hWnd, msg, wParam, lParam))
-    {
-        return 1;
-    }
-
-    if (RendererHandleEvent(hWnd, msg, wParam, lParam))
-    {
-        return 1;
-    }
+    ImGui_ImplDX11_WndProcHandler(hWnd, msg, wParam, lParam);
+    RendererHandleEvent(hWnd, msg, wParam, lParam);
 
     switch (msg)
     {
@@ -102,7 +95,7 @@ static void AppExit()
 
 void AppMain()
 {
-    AppInit(1280, 720, "silver-winner");
+    AppInit(1280, 720, "glowing-telegram");
 
     for (;;)
     {

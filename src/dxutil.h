@@ -2,7 +2,8 @@
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
+#include <Windowsx.h>
+#undef GetWindowFont // because imgui
 #include <ShellScalingApi.h>
 #include <d3d11.h>
 #include <dxgi1_4.h>

@@ -49,10 +49,8 @@
     <None Include="..\shaders\scene.hlsl">
       <Filter>shaders</Filter>
     </None>
-  </ItemGroup>
-  <ItemGroup>
-    <FxCompile Include="..\shaders\selector.hlsl">
+    <None Include="..\shaders\selector.hlsl">
       <Filter>shaders</Filter>
-    </FxCompile>
+    </None>
   </ItemGroup>
 </Project>
