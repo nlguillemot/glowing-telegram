@@ -1,0 +1,53 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="..\src\app.cpp" />
+    <ClCompile Include="..\src\apputil.cpp" />
+    <ClCompile Include="..\src\dxutil.cpp" />
+    <ClCompile Include="..\src\flythrough_camera.c" />
+    <ClCompile Include="..\src\imgui.cpp" />
+    <ClCompile Include="..\src\imgui_demo.cpp" />
+    <ClCompile Include="..\src\imgui_draw.cpp" />
+    <ClCompile Include="..\src\imgui_impl_dx11.cpp" />
+    <ClCompile Include="..\src\main.cpp" />
+    <ClCompile Include="..\src\renderer.cpp" />
+    <ClCompile Include="..\src\scene.cpp" />
+    <ClCompile Include="..\src\stb_image.c" />
+    <ClCompile Include="..\src\tiny_obj_loader.cc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\src\app.h" />
+    <ClInclude Include="..\src\apputil.h" />
+    <ClInclude Include="..\src\dxutil.h" />
+    <ClInclude Include="..\src\flythrough_camera.h" />
+    <ClInclude Include="..\src\imconfig.h" />
+    <ClInclude Include="..\src\imgui.h" />
+    <ClInclude Include="..\src\imgui_impl_dx11.h" />
+    <ClInclude Include="..\src\imgui_internal.h" />
+    <ClInclude Include="..\src\renderer.h" />
+    <ClInclude Include="..\src\scene.h" />
+    <ClInclude Include="..\src\stb_image.h" />
+    <ClInclude Include="..\src\stb_rect_pack.h" />
+    <ClInclude Include="..\src\stb_textedit.h" />
+    <ClInclude Include="..\src\stb_truetype.h" />
+    <ClInclude Include="..\src\tiny_obj_loader.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="shaders">
+      <UniqueIdentifier>{9b9706bc-5a46-444a-82fa-3394ec4ef81e}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="..\shaders\scene.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="..\shaders\common.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\shaders\ssao.hlsl">
+      <Filter>shaders</Filter>
+    </None>
+  </ItemGroup>
+</Project>
