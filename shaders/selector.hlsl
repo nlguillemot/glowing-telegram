@@ -112,9 +112,20 @@ PSOut PSmain(GSOut input)
     float3 toPos = WorldRadius * (pX + pY + pZ);
     float3 worldPos = input.WorldCenter + toPos;
     float4 clipPos = mul(float4(worldPos, 1.0), Camera.WorldViewProjection);
-    output.Normal = normalize(toPos);
+
+    float3 N = normalize(toPos);
+    float3 P = worldPos;
+    float3 C = Camera.WorldPosition.xyz;
+
+    float3 V = normalize(C - P);
+    float3 L = V;
+    float G = max(0, dot(N, L));
+    float3 R = reflect(-L, N);
+    float S = pow(max(0, dot(R, V)), 5.0);
+
+    output.Normal = N;
     output.Depth = clipPos.z / clipPos.w;
-    output.Color = float4(dot(output.Normal, normalize(-Camera.LookDirection.xyz)).xxx * float3(0.6,1.0,0.6), 0.7);
+    output.Color = float4((G + S).xxx * float3(0.6,1.0,0.6), 1.0);
     if (CurrSelection.VertexID.x == input.VertexID)
     {
         output.Color.b = 0.0;
