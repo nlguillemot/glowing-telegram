@@ -38,6 +38,11 @@ cbuffer SceneNodeBuffer : register(BUFFER_REGISTER(SELECTOR_SCENENODE_BUFFER_SLO
     PerSceneNodeData SceneNode;
 };
 
+cbuffer CurrSelectedBuffer : register(BUFFER_REGISTER(SELECTOR_CURRSELECTION_BUFFER_SLOT))
+{
+    CurrSelectionData CurrSelection;
+};
+
 VSOut VSmain(VSIn input)
 {
     VSOut output;
@@ -56,24 +61,30 @@ void GSmain(point VSOut input[1], inout TriangleStream<GSOut> output)
     float3 across = normalize(cross(Camera.LookDirection.xyz, Camera.Up.xyz));
     float3 upward = normalize(cross(across, Camera.LookDirection.xyz));
 
+    float radius = WorldRadius;
+    if (CurrSelection.VertexID.x == input[0].VertexID)
+    {
+        radius *= 1.5;
+    }
+
     GSOut o;
 
     o.WorldCenter = worldPosition;
     o.VertexID = input[0].VertexID;
 
-    o.Position = mul(float4(worldPosition + WorldRadius * (-across + -upward), 1.0), Camera.WorldViewProjection);
+    o.Position = mul(float4(worldPosition + radius * (-across + -upward), 1.0), Camera.WorldViewProjection);
     o.TexCoord = float2(0, 0);
     output.Append(o);
 
-    o.Position = mul(float4(worldPosition + WorldRadius * (-across + +upward), 1.0), Camera.WorldViewProjection);
+    o.Position = mul(float4(worldPosition + radius * (-across + +upward), 1.0), Camera.WorldViewProjection);
     o.TexCoord = float2(0, 1);
     output.Append(o);
     
-    o.Position = mul(float4(worldPosition + WorldRadius * (+across + -upward), 1.0), Camera.WorldViewProjection);
+    o.Position = mul(float4(worldPosition + radius * (+across + -upward), 1.0), Camera.WorldViewProjection);
     o.TexCoord = float2(1, 0);
     output.Append(o);
 
-    o.Position = mul(float4(worldPosition + WorldRadius * (+across + +upward), 1.0), Camera.WorldViewProjection);
+    o.Position = mul(float4(worldPosition + radius * (+across + +upward), 1.0), Camera.WorldViewProjection);
     o.TexCoord = float2(1, 1);
     output.Append(o);
 
@@ -103,7 +114,16 @@ PSOut PSmain(GSOut input)
     float4 clipPos = mul(float4(worldPos, 1.0), Camera.WorldViewProjection);
     output.Normal = normalize(toPos);
     output.Depth = clipPos.z / clipPos.w;
-    output.Color = float4(0, dot(output.Normal, normalize(-Camera.LookDirection.xyz)), 0, 0.5);
+    output.Color = float4(dot(output.Normal, normalize(-Camera.LookDirection.xyz)).xxx * float3(0.6,1.0,0.6), 0.7);
+    if (CurrSelection.VertexID.x == input.VertexID)
+    {
+        output.Color.b = 0.0;
+        if (CurrSelection.Captured.x != 0)
+        {
+            output.Color.g = 0.0;
+        }
+    }
+    output.Color.rgb *= c;
     output.Color.rgb *= output.Color.a;
     output.VertexID = input.VertexID;
     return output;

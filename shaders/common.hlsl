@@ -34,6 +34,12 @@ struct PerSceneNodeData
     float4 AutoGenNormals;
 };
 
+struct CurrSelectionData
+{
+    uint4 VertexID;
+    uint4 Captured;
+};
+
 #define SCENE_CAMERA_BUFFER_SLOT 0
 #define SCENE_MATERIAL_BUFFER_SLOT 1
 #define SCENE_SCENENODE_BUFFER_SLOT 2
@@ -56,6 +62,7 @@ struct PerSceneNodeData
 
 #define SELECTOR_CAMERA_BUFFER_SLOT 0
 #define SELECTOR_SCENENODE_BUFFER_SLOT 1
+#define SELECTOR_CURRSELECTION_BUFFER_SLOT 2
 
 #define BUFFER_REGISTER(slot) b##slot
 #define TEXTURE_REGISTER(slot) t##slot

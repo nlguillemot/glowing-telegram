@@ -17,6 +17,7 @@ using namespace DirectX;
 // to make HLSL compile as C++
 using float4 = XMFLOAT4;
 using float4x4 = XMFLOAT4X4;
+using uint4 = XMUINT4;
 
 #include "shaders/common.hlsl"
 
@@ -88,8 +89,9 @@ struct StaticMesh
 
 struct NodeTransform
 {
-    XMVECTOR Scale;
-    XMVECTOR Quaternion;
+    XMVECTOR Scaling;
+    XMVECTOR RotationOrigin;
+    XMVECTOR RotationQuaternion;
     XMVECTOR Translation;
 };
 
@@ -177,6 +179,8 @@ struct Scene
     ComPtr<ID3D11RasterizerState> pSelectorRasterizerState;
     ComPtr<ID3D11DepthStencilState> pSelectorDepthStencilState;
     ComPtr<ID3D11BlendState> pSelectorBlendState;
+
+    ComPtr<ID3D11Buffer> pCurrSelectedVertexID;
 
     Shader* SelectorVS;
     Shader* SelectorGS;
@@ -349,7 +353,7 @@ static void SceneAddObjMesh(
             positionVertexBufferData.pSysMem = mesh.positions.data();
 
             CHECKHR(dev->CreateBuffer(
-                &CD3D11_BUFFER_DESC(sizeof(VertexPosition) * numVertices, D3D11_BIND_VERTEX_BUFFER, D3D11_USAGE_IMMUTABLE), 
+                &CD3D11_BUFFER_DESC(sizeof(VertexPosition) * numVertices, D3D11_BIND_VERTEX_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE), 
                 &positionVertexBufferData, 
                 &pPositionBuffer));
 
@@ -550,8 +554,9 @@ static int SceneAddStaticMeshSceneNode(int staticMeshID)
     const StaticMesh& staticMesh = g_Scene.StaticMeshes[staticMeshID];
 
     SceneNode sceneNode;
-    sceneNode.Transform.Scale = XMVectorSet(1.0f, 1.0f, 1.0f, 0.0f);
-    sceneNode.Transform.Quaternion = XMQuaternionIdentity();
+    sceneNode.Transform.Scaling = XMVectorSet(1.0f, 1.0f, 1.0f, 0.0f);
+    sceneNode.Transform.RotationOrigin = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
+    sceneNode.Transform.RotationQuaternion = XMQuaternionIdentity();
     sceneNode.Transform.Translation = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
     sceneNode.MaterialID = staticMesh.MaterialID;
     sceneNode.Type = SCENENODETYPE_STATICMESH;
@@ -742,6 +747,14 @@ void SceneInit()
         selectorBlendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
         selectorBlendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
         CHECKHR(dev->CreateBlendState(&selectorBlendDesc, &g_Scene.pSelectorBlendState));
+
+        CurrSelectionData selection = {};
+        selection.VertexID.x = selection.VertexID.y = selection.VertexID.z = selection.VertexID.w = UINT_MAX;
+
+        D3D11_SUBRESOURCE_DATA initialSelect = {};
+        initialSelect.pSysMem = &selection;
+        initialSelect.SysMemPitch = initialSelect.SysMemSlicePitch = sizeof(CurrSelectionData);
+        CHECKHR(dev->CreateBuffer(&CD3D11_BUFFER_DESC(sizeof(CurrSelectionData), D3D11_BIND_CONSTANT_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE), &initialSelect, &g_Scene.pCurrSelectedVertexID));
     }
 
     g_Scene.LastMouseX = INT_MIN;
@@ -787,7 +800,7 @@ void SceneResize(
         &g_Scene.pSceneNormalSRV));
 
     CHECKHR(dev->CreateTexture2D(
-        &CD3D11_TEXTURE2D_DESC(DXGI_FORMAT_R32_UINT, renderWidth, renderHeight, 1, 1, D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS, D3D11_USAGE_DEFAULT, D3D11_CPU_ACCESS_READ),
+        &CD3D11_TEXTURE2D_DESC(DXGI_FORMAT_R32_UINT, renderWidth, renderHeight, 1, 1, D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS, D3D11_USAGE_DEFAULT, 0),
         NULL,
         &g_Scene.pSelectorTex2D));
 
@@ -808,44 +821,44 @@ void SceneResize(
     g_Scene.SceneProjection = XMMatrixPerspectiveFovLH(XMConvertToRadians(90.0f), aspectWbyH, 0.001f, 10.0f);
 }
 
+static UINT32 PickSelector(int x, int y)
+{
+    if (x < g_Scene.SceneViewport.TopLeftX || x > g_Scene.SceneViewport.TopLeftX + g_Scene.SceneViewport.Width ||
+        y < g_Scene.SceneViewport.TopLeftY || y > g_Scene.SceneViewport.TopLeftY + g_Scene.SceneViewport.Height)
+    {
+        return UINT_MAX;
+    }
+
+    ID3D11Device* dev = RendererGetDevice();
+    ID3D11DeviceContext* dc = RendererGetDeviceContext();
+
+    ComPtr<ID3D11Texture2D> pickTex2D;
+    CHECKHR(dev->CreateTexture2D(&CD3D11_TEXTURE2D_DESC(DXGI_FORMAT_R32_UINT, 1, 1, 1, 1, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ), NULL, &pickTex2D));
+
+    D3D11_BOX srcBox = {};
+    dc->CopySubresourceRegion(pickTex2D.Get(), 0, 0, 0, 0, g_Scene.pSelectorTex2D.Get(), 0, &CD3D11_BOX(x, y, 0, x + 1, y + 1, 1));
+
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    CHECKHR(dc->Map(pickTex2D.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+
+    UINT32 pickVertexID = *(UINT32*)mapped.pData;
+
+    dc->Unmap(pickTex2D.Get(), 0);
+
+    return pickVertexID;
+}
+
 bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    if (msg == WM_MBUTTONDOWN)
+    if (msg == WM_LBUTTONDOWN)
     {
-        POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-
-        printf("client: { %d, %d }\n", p.x, p.y);
-
-        if (g_Scene.SceneNodes.empty())
-            goto done;
-
-        const SceneNode& sceneNode = g_Scene.SceneNodes[0];
-
-        if (sceneNode.Type != SCENENODETYPE_STATICMESH)
-            goto done;
-
-        StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
-
-        //XMMATRIX worldMatrix = XMMatrixIdentity();
-        //worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixScalingFromVector(sceneNode.Transform.Scale));
-        //worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixRotationQuaternion(sceneNode.Transform.Quaternion));
-        //worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixTranslationFromVector(sceneNode.Transform.Translation));
-
-        //D3D11_VIEWPORT vp = g_Scene.SceneViewport;
-        //XMVECTOR modelClick = XMVector3Unproject(
-        //    XMVectorSet((float)p.x, (float)p.y, 1.0f, 1.0f),
-        //    vp.TopLeftX, vp.TopLeftY, vp.Width, vp.Height, vp.MinDepth, vp.MaxDepth,
-        //    g_Scene.SceneProjection, g_Scene.SceneWorldView, worldMatrix);
-
-        //XMVECTOR modelCamPos = XMVector4Transform(XMVectorSetW(XMLoadFloat3(&g_Scene.CameraPos), 1.0f), XMMatrixInverse(NULL, worldMatrix));
-        //XMVECTOR toClick = XMVector3Normalize(XMVectorSubtract(modelClick, modelCamPos));
-
-        //for (size_t i = 0; i < staticMesh.CPUPositions->size(); i++)
-        //{
-
-        //}
-        
-        done:;
+        UINT32 pickVertexID = PickSelector(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        printf("pickVertexID: %u\n", pickVertexID);
+            
+        if (pickVertexID == UINT_MAX)
+            g_Scene.DragVertexID = -1;
+        else
+            g_Scene.DragVertexID = (int)pickVertexID;
     }
     return false;
 }
@@ -891,7 +904,10 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
     if (g_Scene.LastMouseY == INT_MIN)
         g_Scene.LastMouseY = currMouseY;
 
-    if (!GetAsyncKeyState(VK_MBUTTON))
+    int deltaMouseX = currMouseX - g_Scene.LastMouseX;
+    int deltaMouseY = currMouseY - g_Scene.LastMouseY;
+
+    if (!GetAsyncKeyState(VK_LBUTTON))
     {
         g_Scene.DragVertexID = -1;
     }
@@ -900,26 +916,28 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
     ID3D11DeviceContext* dc = RendererGetDeviceContext();
 
     // Update camera
+    XMFLOAT3 cameraUp;
+    XMStoreFloat3(&cameraUp, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+    static const float kCameraUp[3] = { 0.0f, 1.0f, 0.0f };
     {
         float activated = GetAsyncKeyState(VK_RBUTTON) ? 1.0f : 0.0f;
-        float up[3] = { 0.0f, 1.0f, 0.0f };
         XMFLOAT4X4 worldView;
         if (activated)
             flythrough_camera_update(
                 &g_Scene.CameraPos.x,
                 &g_Scene.CameraLook.x,
-                up,
+                &cameraUp.x,
                 &worldView.m[0][0],
                 deltaTicks / (float)ticksPerSecond,
                 1.0f * (GetAsyncKeyState(VK_LSHIFT) ? 3.0f : 1.0f) * activated,
                 0.5f * activated,
                 80.0f,
-                currMouseX - g_Scene.LastMouseX, currMouseY - g_Scene.LastMouseY,
+                deltaMouseX, deltaMouseY,
                 GetAsyncKeyState('W'), GetAsyncKeyState('A'), GetAsyncKeyState('S'), GetAsyncKeyState('D'),
                 GetAsyncKeyState(VK_SPACE), GetAsyncKeyState(VK_LCONTROL),
                 FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
         else
-            flythrough_camera_look_to(&g_Scene.CameraPos.x, &g_Scene.CameraLook.x, up, &worldView.m[0][0], FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
+            flythrough_camera_look_to(&g_Scene.CameraPos.x, &g_Scene.CameraLook.x, &cameraUp.x, &worldView.m[0][0], FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
 
         g_Scene.SceneWorldView = XMLoadFloat4x4(&worldView);
 
@@ -932,9 +950,49 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         XMStoreFloat4x4(&camera->WorldViewProjection, XMMatrixTranspose(worldViewProjection));
         XMStoreFloat4(&camera->WorldPosition, XMVectorSetW(XMLoadFloat3(&g_Scene.CameraPos), 1.0f));
         XMStoreFloat4(&camera->LookDirection, XMLoadFloat3(&g_Scene.CameraLook));
-        XMStoreFloat4(&camera->Up, XMLoadFloat3((XMFLOAT3*)up));
+        XMStoreFloat4(&camera->Up, XMLoadFloat3(&cameraUp));
 
         dc->Unmap(g_Scene.pCameraBuffer.Get(), 0);
+    }
+
+    // Update dragged vertex
+    if (g_Scene.DragVertexID != -1 &&
+        !g_Scene.SceneNodes.empty() &&
+        g_Scene.SceneNodes[0].Type == SCENENODETYPE_STATICMESH)
+    {
+        const SceneNode& sceneNode = g_Scene.SceneNodes[0];
+        const StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
+        XMFLOAT3* cpuPosBuf = staticMesh.CPUPositions->data();
+        XMFLOAT3 currPos = cpuPosBuf[g_Scene.DragVertexID];
+
+        XMVECTOR up = XMLoadFloat3(&cameraUp);
+        XMVECTOR forward = XMLoadFloat3(&g_Scene.CameraLook);
+        XMVECTOR across = XMVector3Normalize(XMVector3Cross(forward, up));
+        XMVECTOR upward = XMVector3Normalize(XMVector3Cross(across, forward));
+
+        XMMATRIX transform = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, sceneNode.Transform.Translation);
+
+        XMVECTOR clipPos = XMVector3Transform(XMLoadFloat3(&currPos), XMMatrixMultiply(XMMatrixMultiply(transform, g_Scene.SceneWorldView), g_Scene.SceneProjection));
+
+        XMVECTOR oldUnprojected = XMVector3Unproject(
+            XMVectorSet((float)g_Scene.LastMouseX, (float)g_Scene.LastMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
+            g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
+            g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
+
+        XMVECTOR newUnprojected = XMVector3Unproject(
+            XMVectorSet((float)currMouseX, (float)currMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
+            g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
+            g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
+
+        XMVECTOR movement = newUnprojected - oldUnprojected;
+     
+        XMVECTOR moved = XMLoadFloat3(&currPos) + movement;
+        XMStoreFloat3(&cpuPosBuf[g_Scene.DragVertexID], moved);
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        CHECKHR(dc->Map(staticMesh.pPositionVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+        memcpy(mapped.pData, cpuPosBuf, staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
+        dc->Unmap(staticMesh.pPositionVertexBuffer.Get(), 0);
     }
 
     const float kClearColor[] = {
@@ -1026,17 +1084,17 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
                 ID3D11ShaderResourceView* diffuseSRV = NULL;
                 if (material->DiffuseTextureID != -1)
-                    diffuseSRV = g_Scene.Textures[material->DiffuseTextureID].SRV.Get();
+                diffuseSRV = g_Scene.Textures[material->DiffuseTextureID].SRV.Get();
                 dc->PSSetShaderResources(SCENE_DIFFUSE_TEXTURE_SLOT, 1, &diffuseSRV);
 
                 ID3D11ShaderResourceView* specularSRV = NULL;
                 if (material->SpecularTextureID != -1)
-                    specularSRV = g_Scene.Textures[material->SpecularTextureID].SRV.Get();
+                specularSRV = g_Scene.Textures[material->SpecularTextureID].SRV.Get();
                 dc->PSSetShaderResources(SCENE_SPECULAR_TEXTURE_SLOT, 1, &specularSRV);
 
                 ID3D11ShaderResourceView* bumpSRV = NULL;
                 if (material->BumpTextureID != -1)
-                    bumpSRV = g_Scene.Textures[material->BumpTextureID].SRV.Get();
+                bumpSRV = g_Scene.Textures[material->BumpTextureID].SRV.Get();
                 dc->PSSetShaderResources(SCENE_BUMP_TEXTURE_SLOT, 1, &bumpSRV);
             }
 
@@ -1047,15 +1105,10 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
                 PerSceneNodeData* sceneNodeData = (PerSceneNodeData*)mapped.pData;
 
-                XMMATRIX worldMatrix = XMMatrixIdentity();
-                worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixScalingFromVector(sceneNode.Transform.Scale));
-                worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixRotationQuaternion(sceneNode.Transform.Quaternion));
-                worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixTranslationFromVector(sceneNode.Transform.Translation));
+                XMMATRIX worldMatrix = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, sceneNode.Transform.Translation);
                 XMStoreFloat4x4(&sceneNodeData->WorldTransform, XMMatrixTranspose(worldMatrix));
 
-                XMMATRIX normalMatrix = XMMatrixIdentity();
-                normalMatrix = XMMatrixMultiply(normalMatrix, XMMatrixScalingFromVector(XMVectorReciprocal(sceneNode.Transform.Scale)));
-                normalMatrix = XMMatrixMultiply(normalMatrix, XMMatrixRotationQuaternion(sceneNode.Transform.Quaternion));
+                XMMATRIX normalMatrix = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, XMVectorZero());
                 XMStoreFloat4x4(&sceneNodeData->NormalTransform, XMMatrixTranspose(normalMatrix));
 
                 if (sceneNode.Type == SCENENODETYPE_STATICMESH &&
@@ -1109,6 +1162,21 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         dc->PSSetShader(NULL, NULL, 0);
     }
 
+    // update current selection
+    {
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        CHECKHR(dc->Map(g_Scene.pCurrSelectedVertexID.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+
+        CurrSelectionData selection = {};
+        selection.VertexID.x = selection.VertexID.y = selection.VertexID.z = selection.VertexID.w = g_Scene.DragVertexID == UINT_MAX ? PickSelector(currMouseX, currMouseY) : g_Scene.DragVertexID;
+        selection.Captured.x = selection.Captured.y = selection.Captured.z = selection.Captured.w = g_Scene.DragVertexID != UINT_MAX;
+        
+        CurrSelectionData* pSelection = (CurrSelectionData*)mapped.pData;
+        *pSelection = selection;
+
+        dc->Unmap(g_Scene.pCurrSelectedVertexID.Get(), 0);
+    }
+
     UINT kSelectorClear[4] = { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
     dc->ClearUnorderedAccessViewUint(g_Scene.pSelectorUAV.Get(), kSelectorClear);
 
@@ -1137,6 +1205,10 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         dc->GSSetConstantBuffers(SELECTOR_CAMERA_BUFFER_SLOT, 1, &cameraCBV);
         dc->PSSetConstantBuffers(SELECTOR_CAMERA_BUFFER_SLOT, 1, &cameraCBV);
 
+        ID3D11Buffer* currSelectedCBV = g_Scene.pCurrSelectedVertexID.Get();
+        dc->GSSetConstantBuffers(SELECTOR_CURRSELECTION_BUFFER_SLOT, 1, &currSelectedCBV);
+        dc->PSSetConstantBuffers(SELECTOR_CURRSELECTION_BUFFER_SLOT, 1, &currSelectedCBV);
+            
         // SceneNode CBV
         {
             D3D11_MAPPED_SUBRESOURCE mapped;
@@ -1144,15 +1216,10 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
             PerSceneNodeData* sceneNodeData = (PerSceneNodeData*)mapped.pData;
 
-            XMMATRIX worldMatrix = XMMatrixIdentity();
-            worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixScalingFromVector(sceneNode.Transform.Scale));
-            worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixRotationQuaternion(sceneNode.Transform.Quaternion));
-            worldMatrix = XMMatrixMultiply(worldMatrix, XMMatrixTranslationFromVector(sceneNode.Transform.Translation));
+            XMMATRIX worldMatrix = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, sceneNode.Transform.Translation);
             XMStoreFloat4x4(&sceneNodeData->WorldTransform, XMMatrixTranspose(worldMatrix));
 
-            XMMATRIX normalMatrix = XMMatrixIdentity();
-            normalMatrix = XMMatrixMultiply(normalMatrix, XMMatrixScalingFromVector(XMVectorReciprocal(sceneNode.Transform.Scale)));
-            normalMatrix = XMMatrixMultiply(normalMatrix, XMMatrixRotationQuaternion(sceneNode.Transform.Quaternion));
+            XMMATRIX normalMatrix = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, XMVectorZero());
             XMStoreFloat4x4(&sceneNodeData->NormalTransform, XMMatrixTranspose(normalMatrix));
 
             dc->Unmap(g_Scene.pSceneNodeBuffer.Get(), 0);

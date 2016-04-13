@@ -48,7 +48,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
 static void AppInit(int width, int height, const char* title)
 {
-    // CHECKHR(SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE));
+    CHECKHR(SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE));
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
