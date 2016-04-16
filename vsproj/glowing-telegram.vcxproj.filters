@@ -14,7 +14,8 @@
     <ClCompile Include="..\src\scene.cpp" />
     <ClCompile Include="..\src\stb_image.c" />
     <ClCompile Include="..\src\tiny_obj_loader.cc" />
-    <ClCompile Include="..\src\par_shapes.cpp" />
+    <ClCompile Include="..\src\halfedge.cpp" />
+    <ClCompile Include="..\src\arap.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\app.h" />
@@ -32,7 +33,9 @@
     <ClInclude Include="..\src\stb_textedit.h" />
     <ClInclude Include="..\src\stb_truetype.h" />
     <ClInclude Include="..\src\tiny_obj_loader.h" />
-    <ClInclude Include="..\src\par_shapes.h" />
+    <ClInclude Include="..\src\arap.h" />
+    <ClInclude Include="..\src\halfedge.h" />
+    <ClInclude Include="..\src\svd3.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="shaders">

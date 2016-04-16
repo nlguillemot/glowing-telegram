@@ -77,6 +77,7 @@
   <ItemGroup>
     <ClCompile Include="..\src\app.cpp" />
     <ClCompile Include="..\src\apputil.cpp" />
+    <ClCompile Include="..\src\arap.cpp" />
     <ClCompile Include="..\src\dxutil.cpp" />
     <ClCompile Include="..\src\flythrough_camera.c" />
     <ClCompile Include="..\src\imgui.cpp" />
@@ -84,7 +85,7 @@
     <ClCompile Include="..\src\imgui_draw.cpp" />
     <ClCompile Include="..\src\imgui_impl_dx11.cpp" />
     <ClCompile Include="..\src\main.cpp" />
-    <ClCompile Include="..\src\par_shapes.cpp" />
+    <ClCompile Include="..\src\halfedge.cpp" />
     <ClCompile Include="..\src\renderer.cpp" />
     <ClCompile Include="..\src\scene.cpp" />
     <ClCompile Include="..\src\stb_image.c" />
@@ -93,19 +94,21 @@
   <ItemGroup>
     <ClInclude Include="..\src\app.h" />
     <ClInclude Include="..\src\apputil.h" />
+    <ClInclude Include="..\src\arap.h" />
     <ClInclude Include="..\src\dxutil.h" />
     <ClInclude Include="..\src\flythrough_camera.h" />
     <ClInclude Include="..\src\imconfig.h" />
     <ClInclude Include="..\src\imgui.h" />
     <ClInclude Include="..\src\imgui_impl_dx11.h" />
     <ClInclude Include="..\src\imgui_internal.h" />
-    <ClInclude Include="..\src\par_shapes.h" />
+    <ClInclude Include="..\src\halfedge.h" />
     <ClInclude Include="..\src\renderer.h" />
     <ClInclude Include="..\src\scene.h" />
     <ClInclude Include="..\src\stb_image.h" />
     <ClInclude Include="..\src\stb_rect_pack.h" />
     <ClInclude Include="..\src\stb_textedit.h" />
     <ClInclude Include="..\src\stb_truetype.h" />
+    <ClInclude Include="..\src\svd3.h" />
     <ClInclude Include="..\src\tiny_obj_loader.h" />
   </ItemGroup>
   <ItemGroup>

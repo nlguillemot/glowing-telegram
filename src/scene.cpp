@@ -4,11 +4,12 @@
 #include "renderer.h"
 #include "app.h"
 #include "flythrough_camera.h"
+#include "arap.h"
 
 #include "imgui.h"
 #include "tiny_obj_loader.h"
 #include "stb_image.h"
-#include "par_shapes.h"
+#include "halfedge.h"
 
 #include <DirectXMath.h>
 
@@ -84,7 +85,10 @@ struct StaticMesh
     UINT IndexCountPerInstance;
     UINT StartIndexLocation;
 
+    std::shared_ptr<std::vector<XMFLOAT3>> BindPoseCPUPositions;
     std::shared_ptr<std::vector<XMFLOAT3>> CPUPositions;
+    std::shared_ptr<HalfedgeMesh> Halfedge;
+    std::shared_ptr<std::vector<float>> EdgeWeights;
 };
 
 struct NodeTransform
@@ -344,6 +348,9 @@ static void SceneAddObjMesh(
         ComPtr<ID3D11Buffer> pIndexBuffer;
 
         std::shared_ptr<std::vector<XMFLOAT3>> cpuPositions = std::make_shared<std::vector<XMFLOAT3>>();
+        std::shared_ptr<std::vector<XMFLOAT3>> bindPoseCPUPositions = std::make_shared<std::vector<XMFLOAT3>>();
+        std::shared_ptr<HalfedgeMesh> halfedge = std::make_shared<HalfedgeMesh>();
+        std::shared_ptr<std::vector<float>> edgeWeights = std::make_shared<std::vector<float>>();
 
         int numVertices = (int)mesh.positions.size() / 3;
 
@@ -358,6 +365,8 @@ static void SceneAddObjMesh(
                 &pPositionBuffer));
 
             cpuPositions->resize(numVertices);
+            memcpy(cpuPositions->data(), mesh.positions.data(), numVertices * sizeof(XMFLOAT3));
+            bindPoseCPUPositions->resize(numVertices);
             memcpy(cpuPositions->data(), mesh.positions.data(), numVertices * sizeof(XMFLOAT3));
         }
 
@@ -408,6 +417,45 @@ static void SceneAddObjMesh(
             &pIndexBuffer));
 
         const int numFaces = (int)shape.mesh.indices.size() / 3;
+
+        *halfedge = HalfedgeFromIndexedTriangles(
+            mesh.positions.data(), numVertices,
+            shape.mesh.indices.data(), numFaces);
+
+        // Compute cotangent weights for every halfedge
+        edgeWeights->resize(halfedge->Halfedges.size() / 2);
+        for (int halfedgeID = 0; halfedgeID < (int)halfedge->Halfedges.size(); halfedgeID += 2)
+        {
+            HalfedgeMesh::Halfedge h1 = halfedge->Halfedges[halfedgeID];
+            HalfedgeMesh::Halfedge h2 = halfedge->Halfedges[halfedgeID + 1];
+
+            XMVECTOR v1 = XMLoadFloat3((XMFLOAT3*)&mesh.positions[3 * h2.VertexID]);
+            XMVECTOR v2 = XMLoadFloat3((XMFLOAT3*)&mesh.positions[3 * h1.VertexID]);
+
+            float weight = 0.0f;
+
+            if (h1.FaceID != -1)
+            {
+                XMVECTOR v3 = XMLoadFloat3((XMFLOAT3*)&mesh.positions[3 * halfedge->Halfedges[h1.NextHalfedgeID].VertexID]);
+
+                XMVECTOR a = v1 - v3;
+                XMVECTOR b = v2 - v3;
+                weight += XMVectorGetX(XMVector3Dot(a, b) / XMVector3Length(XMVector3Cross(a, b)) / XMVector3Length(a) / XMVector3Length(b));
+            }
+
+            if (h2.FaceID != -1)
+            {
+                XMVECTOR v3 = XMLoadFloat3((XMFLOAT3*)&mesh.positions[3 * halfedge->Halfedges[h2.NextHalfedgeID].VertexID]);
+
+                XMVECTOR a = v1 - v3;
+                XMVECTOR b = v2 - v3;
+                weight += XMVectorGetX(XMVector3Dot(a, b) / XMVector3Length(XMVector3Cross(a, b)) / XMVector3Length(a) / XMVector3Length(b));
+            }
+
+            weight /= 2.0f;
+
+            (*edgeWeights)[halfedgeID / 2] = weight;
+        }
 
         // Generate tangents if possible.
         // Note: The handedness of the local coordinate system is stored as +/-1 in the w-coordinate
@@ -537,6 +585,9 @@ static void SceneAddObjMesh(
             sm.IndexCountPerInstance = (face + 1 - firstFace) * 3;
             sm.StartIndexLocation = firstFace * 3;
             sm.CPUPositions = cpuPositions;
+            sm.BindPoseCPUPositions = bindPoseCPUPositions;
+            sm.Halfedge = halfedge;
+            sm.EdgeWeights = edgeWeights;
 
             if (newStaticMeshIDs)
                 newStaticMeshIDs->push_back((int)g_Scene.StaticMeshes.size());
@@ -823,8 +874,8 @@ void SceneResize(
 
 static UINT32 PickSelector(int x, int y)
 {
-    if (x < g_Scene.SceneViewport.TopLeftX || x > g_Scene.SceneViewport.TopLeftX + g_Scene.SceneViewport.Width ||
-        y < g_Scene.SceneViewport.TopLeftY || y > g_Scene.SceneViewport.TopLeftY + g_Scene.SceneViewport.Height)
+    if (x < g_Scene.SceneViewport.TopLeftX || x >= g_Scene.SceneViewport.TopLeftX + g_Scene.SceneViewport.Width ||
+        y < g_Scene.SceneViewport.TopLeftY || y >= g_Scene.SceneViewport.TopLeftY + g_Scene.SceneViewport.Height)
     {
         return UINT_MAX;
     }
@@ -987,11 +1038,26 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         XMVECTOR movement = newUnprojected - oldUnprojected;
      
         XMVECTOR moved = XMLoadFloat3(&currPos) + movement;
+
+        // update dragged vertices
         XMStoreFloat3(&cpuPosBuf[g_Scene.DragVertexID], moved);
 
         D3D11_MAPPED_SUBRESOURCE mapped;
         CHECKHR(dc->Map(staticMesh.pPositionVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+
+        std::vector<int> constrainedVertices;
+        constrainedVertices.push_back(g_Scene.DragVertexID);
+
+        arap(
+            &staticMesh.BindPoseCPUPositions->data()->x, &staticMesh.CPUPositions->data()->x, (int)staticMesh.CPUPositions->size(),
+            (const int*)staticMesh.Halfedge->Vertices.data(),
+            (const int*)staticMesh.Halfedge->Halfedges.data(),
+            staticMesh.EdgeWeights->data(),
+            constrainedVertices.data(), (int)constrainedVertices.size(),
+            DEFAULT_NUM_ARAP_ITERATIONS);
+
         memcpy(mapped.pData, cpuPosBuf, staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
+
         dc->Unmap(staticMesh.pPositionVertexBuffer.Get(), 0);
     }
 
