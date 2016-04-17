@@ -89,6 +89,7 @@ struct StaticMesh
     std::shared_ptr<std::vector<XMFLOAT3>> CPUPositions;
     std::shared_ptr<HalfedgeMesh> Halfedge;
     std::shared_ptr<std::vector<float>> EdgeWeights;
+    std::shared_ptr<std::vector<float>> ARAPSystemMatrix;
 };
 
 struct NodeTransform
@@ -351,6 +352,7 @@ static void SceneAddObjMesh(
         std::shared_ptr<std::vector<XMFLOAT3>> bindPoseCPUPositions = std::make_shared<std::vector<XMFLOAT3>>();
         std::shared_ptr<HalfedgeMesh> halfedge = std::make_shared<HalfedgeMesh>();
         std::shared_ptr<std::vector<float>> edgeWeights = std::make_shared<std::vector<float>>();
+        std::shared_ptr<std::vector<float>> arapSystemMatrix = std::make_shared<std::vector<float>>();
 
         int numVertices = (int)mesh.positions.size() / 3;
 
@@ -456,6 +458,9 @@ static void SceneAddObjMesh(
 
             (*edgeWeights)[halfedgeID / 2] = weight;
         }
+
+        arapSystemMatrix->resize(ARAP_PACKED_SYSTEM_SIZE(numVertices));
+        arap_factorize_system(numVertices, (int)edgeWeights->size(), (const int*)halfedge->Halfedges.data(), edgeWeights->data(), arapSystemMatrix->data());
 
         // Generate tangents if possible.
         // Note: The handedness of the local coordinate system is stored as +/-1 in the w-coordinate
@@ -588,6 +593,7 @@ static void SceneAddObjMesh(
             sm.BindPoseCPUPositions = bindPoseCPUPositions;
             sm.Halfedge = halfedge;
             sm.EdgeWeights = edgeWeights;
+            sm.ARAPSystemMatrix = arapSystemMatrix;
 
             if (newStaticMeshIDs)
                 newStaticMeshIDs->push_back((int)g_Scene.StaticMeshes.size());
@@ -1053,6 +1059,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
             (const int*)staticMesh.Halfedge->Vertices.data(),
             (const int*)staticMesh.Halfedge->Halfedges.data(),
             staticMesh.EdgeWeights->data(),
+            staticMesh.ARAPSystemMatrix->data(),
             constrainedVertices.data(), (int)constrainedVertices.size(),
             DEFAULT_NUM_ARAP_ITERATIONS);
 

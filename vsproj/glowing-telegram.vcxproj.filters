@@ -56,4 +56,9 @@
       <Filter>shaders</Filter>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <Library Include="..\src\libf2c.lib" />
+    <Library Include="..\src\blas.lib" />
+    <Library Include="..\src\clapack.lib" />
+  </ItemGroup>
 </Project>
