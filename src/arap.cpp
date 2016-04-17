@@ -8,9 +8,6 @@
 #include <assert.h>
 #include <stdlib.h>
 
-// debugging
-#include <stdio.h>
-
 // CLAPACK imports
 extern "C" int spptrf_(char* uplo, int* n, float* ap, int* info);
 extern "C" int spptrs_(char *uplo, int* n, int* nrhs, float* ap, float* b, int* ldb, int* info);
@@ -139,6 +136,7 @@ static void update_positions(
     const float* p_bind_XYZs, float* p_guess_XYZs, int nv,
     const int* v_hIDs,
     const int* h_vfnpIDs,
+    const float* e_ws,
     const float* F,
     int* ks, int nk,
     const float* Ris)
@@ -160,6 +158,7 @@ static void update_positions(
         int curr_hID = v_hIDs[i];
         do {
             int j = h_vfnpIDs[4 * curr_hID + 0];
+            float wij = e_ws[curr_hID / 2];
 
             const float* Ri = &Ris[i * 9];
             const float* Rj = &Ris[j * 9];
@@ -188,9 +187,9 @@ static void update_positions(
             };
 
             // all neighbors are summed
-            bx_tmp += rhs[0];
-            by_tmp += rhs[1];
-            bz_tmp += rhs[2];
+            bx_tmp += wij * rhs[0];
+            by_tmp += wij * rhs[1];
+            bz_tmp += wij * rhs[2];
 
             curr_hID = h_vfnpIDs[4 * (curr_hID ^ 1) + 2];
         } while (curr_hID != v_hIDs[i]);
@@ -214,9 +213,9 @@ static void update_positions(
     // Update new guess
     for (int i = 0; i < nv; i++)
     {
-        p_guess_XYZs[3 * i + 0] += bx[i];
-        p_guess_XYZs[3 * i + 1] += by[i];
-        p_guess_XYZs[3 * i + 2] += bz[i];
+        p_guess_XYZs[3 * i + 0] = bx[i];
+        p_guess_XYZs[3 * i + 1] = by[i];
+        p_guess_XYZs[3 * i + 2] = bz[i];
     }
 
     free(b);
@@ -246,7 +245,7 @@ void arap(
         update_positions(
             p_bind_XYZs, p_guess_XYZs, nv,
             v_hIDs,
-            h_vfnpIDs,
+            h_vfnpIDs, e_ws,
             F,
             ks, nk,
             Ris);

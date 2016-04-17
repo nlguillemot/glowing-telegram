@@ -369,7 +369,7 @@ static void SceneAddObjMesh(
             cpuPositions->resize(numVertices);
             memcpy(cpuPositions->data(), mesh.positions.data(), numVertices * sizeof(XMFLOAT3));
             bindPoseCPUPositions->resize(numVertices);
-            memcpy(cpuPositions->data(), mesh.positions.data(), numVertices * sizeof(XMFLOAT3));
+            memcpy(bindPoseCPUPositions->data(), mesh.positions.data(), numVertices * sizeof(XMFLOAT3));
         }
 
         if (!mesh.texcoords.empty())
