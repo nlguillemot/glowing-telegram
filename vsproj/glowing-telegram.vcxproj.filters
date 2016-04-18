@@ -36,6 +36,7 @@
     <ClInclude Include="..\src\arap.h" />
     <ClInclude Include="..\src\halfedge.h" />
     <ClInclude Include="..\src\svd3.h" />
+    <ClInclude Include="..\src\mkl.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="shaders">

@@ -21,6 +21,7 @@
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v140</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
+    <UseIntelMKL>Parallel</UseIntelMKL>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -28,6 +29,7 @@
     <PlatformToolset>v140</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
+    <UseIntelMKL>Parallel</UseIntelMKL>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -42,19 +44,19 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(SolutionDir)..\;$(SolutionDir)..\src\;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
+    <IncludePath>C:\Program Files (x86)\IntelSWTools\parallel_studio_xe_2016.2.055\compilers_and_libraries_2016\windows\mkl\include\;$(SolutionDir)..\;$(SolutionDir)..\src\;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
     <LocalDebuggerWorkingDirectory>$(SolutionDir)..\</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <OutDir>$(SolutionDir)..\</OutDir>
     <TargetName>$(ProjectName)d</TargetName>
-    <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(NETFXKitsDir)Lib\um\x64</LibraryPath>
+    <LibraryPath>C:\Program Files (x86)\IntelSWTools\parallel_studio_xe_2016.2.055\compilers_and_libraries_2016\windows\compiler\lib\intel64_win\;C:\Program Files (x86)\IntelSWTools\parallel_studio_xe_2016.2.055\compilers_and_libraries_2016\windows\mkl\lib\intel64_win\;$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(NETFXKitsDir)Lib\um\x64</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(SolutionDir)..\;$(SolutionDir)..\src\;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
+    <IncludePath>C:\Program Files (x86)\IntelSWTools\parallel_studio_xe_2016.2.055\compilers_and_libraries_2016\windows\mkl\include\;$(SolutionDir)..\;$(SolutionDir)..\src\;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
     <LocalDebuggerWorkingDirectory>$(SolutionDir)..\</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <OutDir>$(SolutionDir)..\</OutDir>
-    <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(NETFXKitsDir)Lib\um\x64</LibraryPath>
+    <LibraryPath>C:\Program Files (x86)\IntelSWTools\parallel_studio_xe_2016.2.055\compilers_and_libraries_2016\windows\compiler\lib\intel64_win\;C:\Program Files (x86)\IntelSWTools\parallel_studio_xe_2016.2.055\compilers_and_libraries_2016\windows\mkl\lib\intel64_win\;$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(NETFXKitsDir)Lib\um\x64</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -118,6 +120,7 @@
     <ClInclude Include="..\src\imgui_impl_dx11.h" />
     <ClInclude Include="..\src\imgui_internal.h" />
     <ClInclude Include="..\src\halfedge.h" />
+    <ClInclude Include="..\src\mkl.h" />
     <ClInclude Include="..\src\renderer.h" />
     <ClInclude Include="..\src\scene.h" />
     <ClInclude Include="..\src\stb_image.h" />

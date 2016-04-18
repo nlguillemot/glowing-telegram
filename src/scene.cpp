@@ -90,6 +90,8 @@ struct StaticMesh
     std::shared_ptr<HalfedgeMesh> Halfedge;
     std::shared_ptr<std::vector<float>> EdgeWeights;
     std::shared_ptr<std::vector<float>> ARAPSystemMatrix;
+    std::shared_ptr<std::vector<int>> ConstrainedVertexIDs;
+    bool SystemMatrixNeedsRebuild;
 };
 
 struct NodeTransform
@@ -194,6 +196,7 @@ struct Scene
     uint64_t LastTicks;
     int LastMouseX, LastMouseY;
 
+    int ModelingSceneNodeID;
     int DragVertexID;
 };
 
@@ -353,6 +356,7 @@ static void SceneAddObjMesh(
         std::shared_ptr<HalfedgeMesh> halfedge = std::make_shared<HalfedgeMesh>();
         std::shared_ptr<std::vector<float>> edgeWeights = std::make_shared<std::vector<float>>();
         std::shared_ptr<std::vector<float>> arapSystemMatrix = std::make_shared<std::vector<float>>();
+        std::shared_ptr<std::vector<int>> constrainedVertexIDs = std::make_shared<std::vector<int>>();
 
         int numVertices = (int)mesh.positions.size() / 3;
 
@@ -460,7 +464,6 @@ static void SceneAddObjMesh(
         }
 
         arapSystemMatrix->resize(ARAP_PACKED_SYSTEM_SIZE(numVertices));
-        arap_factorize_system(numVertices, (int)edgeWeights->size(), (const int*)halfedge->Halfedges.data(), edgeWeights->data(), arapSystemMatrix->data());
 
         // Generate tangents if possible.
         // Note: The handedness of the local coordinate system is stored as +/-1 in the w-coordinate
@@ -578,7 +581,7 @@ static void SceneAddObjMesh(
                 continue;
             }
 
-            StaticMesh sm;
+            StaticMesh sm = {};
             sm.Name = shape.name;
             sm.pPositionVertexBuffer = pPositionBuffer;
             sm.pTexCoordVertexBuffer = pTexCoordBuffer;
@@ -594,6 +597,8 @@ static void SceneAddObjMesh(
             sm.Halfedge = halfedge;
             sm.EdgeWeights = edgeWeights;
             sm.ARAPSystemMatrix = arapSystemMatrix;
+            sm.ConstrainedVertexIDs = constrainedVertexIDs;
+            sm.SystemMatrixNeedsRebuild = true;
 
             if (newStaticMeshIDs)
                 newStaticMeshIDs->push_back((int)g_Scene.StaticMeshes.size());
@@ -909,14 +914,45 @@ bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_LBUTTONDOWN)
     {
-        UINT32 pickVertexID = PickSelector(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-        printf("pickVertexID: %u\n", pickVertexID);
-            
-        if (pickVertexID == UINT_MAX)
-            g_Scene.DragVertexID = -1;
-        else
-            g_Scene.DragVertexID = (int)pickVertexID;
+        if (!GetAsyncKeyState(VK_RBUTTON)) // don't pick when in camera mode
+        {
+            UINT32 pickVertexID = PickSelector(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            printf("pickVertexID: %u\n", pickVertexID);
+
+            if (pickVertexID == UINT_MAX)
+            {
+                g_Scene.DragVertexID = -1;
+            }
+            else
+            {
+                if (g_Scene.ModelingSceneNodeID != -1)
+                {
+                    SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
+                    StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
+
+                    auto found = std::find(begin(*staticMesh.ConstrainedVertexIDs), end(*staticMesh.ConstrainedVertexIDs), (int)pickVertexID);
+
+                    if (GetAsyncKeyState('C')) // toggle control vertices
+                    {
+                        // toggle constrained status
+                        if (found == end(*staticMesh.ConstrainedVertexIDs))
+                            staticMesh.ConstrainedVertexIDs->push_back((int)pickVertexID);
+                        else
+                            staticMesh.ConstrainedVertexIDs->erase(found);
+
+                        staticMesh.SystemMatrixNeedsRebuild = true;
+                    }
+                    else
+                    {
+                        // new vertex to drag for modeling
+                        if (found != end(*staticMesh.ConstrainedVertexIDs))
+                            g_Scene.DragVertexID = (int)pickVertexID;
+                    }
+                }
+            }
+        }
     }
+    
     return false;
 }
 
@@ -932,6 +968,36 @@ static void SceneShowToolboxGUI()
     ImGui::SetNextWindowPos(ImVec2((float)w - toolboxW, 0), ImGuiSetCond_Always);
     if (ImGui::Begin("Toolbox", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize))
     {
+        if (g_Scene.ModelingSceneNodeID != -1)
+        {
+            SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
+            StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
+
+            if (ImGui::Button("Refactorize ARAP"))
+            {
+                arap_factorize_system(
+                    (int)staticMesh.CPUPositions->size(),
+                    (const int*)staticMesh.Halfedge->Halfedges.data(),
+                    staticMesh.EdgeWeights->data(), (int)staticMesh.EdgeWeights->size(),
+                    staticMesh.ConstrainedVertexIDs->data(), (int)staticMesh.ConstrainedVertexIDs->size(),
+                    staticMesh.ARAPSystemMatrix->data());
+
+                staticMesh.SystemMatrixNeedsRebuild = false;
+            }
+
+            if (ImGui::Button("Reset Bind Pose"))
+            {
+                ID3D11DeviceContext* dc = RendererGetDeviceContext();
+
+                D3D11_MAPPED_SUBRESOURCE mapped;
+                CHECKHR(dc->Map(staticMesh.pPositionVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+
+                memcpy(staticMesh.CPUPositions->data(), staticMesh.BindPoseCPUPositions->data(), staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
+                memcpy(mapped.pData, staticMesh.CPUPositions->data(), staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
+
+                dc->Unmap(staticMesh.pPositionVertexBuffer.Get(), 0);
+            }
+        }
     }
     ImGui::End();
 }
@@ -1012,60 +1078,62 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         dc->Unmap(g_Scene.pCameraBuffer.Get(), 0);
     }
 
-    // Update dragged vertex
-    if (g_Scene.DragVertexID != -1 &&
-        !g_Scene.SceneNodes.empty() &&
-        g_Scene.SceneNodes[0].Type == SCENENODETYPE_STATICMESH)
+    // Update dragged vertex and mesh with it
+    if (g_Scene.ModelingSceneNodeID != -1 && g_Scene.DragVertexID != -1)
     {
-        const SceneNode& sceneNode = g_Scene.SceneNodes[0];
-        const StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
-        XMFLOAT3* cpuPosBuf = staticMesh.CPUPositions->data();
-        XMFLOAT3 currPos = cpuPosBuf[g_Scene.DragVertexID];
+        SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
+        StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
 
-        XMVECTOR up = XMLoadFloat3(&cameraUp);
-        XMVECTOR forward = XMLoadFloat3(&g_Scene.CameraLook);
-        XMVECTOR across = XMVector3Normalize(XMVector3Cross(forward, up));
-        XMVECTOR upward = XMVector3Normalize(XMVector3Cross(across, forward));
+        if (!staticMesh.SystemMatrixNeedsRebuild)
+        {
+            XMFLOAT3* cpuPosBuf = staticMesh.CPUPositions->data();
+            XMFLOAT3 currPos = cpuPosBuf[g_Scene.DragVertexID];
 
-        XMMATRIX transform = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, sceneNode.Transform.Translation);
+            XMVECTOR up = XMLoadFloat3(&cameraUp);
+            XMVECTOR forward = XMLoadFloat3(&g_Scene.CameraLook);
+            XMVECTOR across = XMVector3Normalize(XMVector3Cross(forward, up));
+            XMVECTOR upward = XMVector3Normalize(XMVector3Cross(across, forward));
 
-        XMVECTOR clipPos = XMVector3Transform(XMLoadFloat3(&currPos), XMMatrixMultiply(XMMatrixMultiply(transform, g_Scene.SceneWorldView), g_Scene.SceneProjection));
+            XMMATRIX transform = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, sceneNode.Transform.Translation);
 
-        XMVECTOR oldUnprojected = XMVector3Unproject(
-            XMVectorSet((float)g_Scene.LastMouseX, (float)g_Scene.LastMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
-            g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
-            g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
+            XMVECTOR clipPos = XMVector3Transform(XMLoadFloat3(&currPos), XMMatrixMultiply(XMMatrixMultiply(transform, g_Scene.SceneWorldView), g_Scene.SceneProjection));
 
-        XMVECTOR newUnprojected = XMVector3Unproject(
-            XMVectorSet((float)currMouseX, (float)currMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
-            g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
-            g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
+            XMVECTOR oldUnprojected = XMVector3Unproject(
+                XMVectorSet((float)g_Scene.LastMouseX, (float)g_Scene.LastMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
+                g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
+                g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
 
-        XMVECTOR movement = newUnprojected - oldUnprojected;
-     
-        XMVECTOR moved = XMLoadFloat3(&currPos) + movement;
+            XMVECTOR newUnprojected = XMVector3Unproject(
+                XMVectorSet((float)currMouseX, (float)currMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
+                g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
+                g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
 
-        // update dragged vertices
-        XMStoreFloat3(&cpuPosBuf[g_Scene.DragVertexID], moved);
+            XMVECTOR movement = newUnprojected - oldUnprojected;
 
-        D3D11_MAPPED_SUBRESOURCE mapped;
-        CHECKHR(dc->Map(staticMesh.pPositionVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+            // set positions of constrained vertices
+            for (int c = 0; c < (int)staticMesh.ConstrainedVertexIDs->size(); c++)
+            {
+                int i = (*staticMesh.ConstrainedVertexIDs)[c];
+                XMStoreFloat3(&cpuPosBuf[i], XMLoadFloat3(&cpuPosBuf[i]) + movement);
+            }
 
-        std::vector<int> constrainedVertices;
-        constrainedVertices.push_back(g_Scene.DragVertexID);
+            D3D11_MAPPED_SUBRESOURCE mapped;
+            CHECKHR(dc->Map(staticMesh.pPositionVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
 
-        arap(
-            &staticMesh.BindPoseCPUPositions->data()->x, &staticMesh.CPUPositions->data()->x, (int)staticMesh.CPUPositions->size(),
-            (const int*)staticMesh.Halfedge->Vertices.data(),
-            (const int*)staticMesh.Halfedge->Halfedges.data(),
-            staticMesh.EdgeWeights->data(),
-            staticMesh.ARAPSystemMatrix->data(),
-            constrainedVertices.data(), (int)constrainedVertices.size(),
-            DEFAULT_NUM_ARAP_ITERATIONS);
+            // update the mesh as rigidly as possible based on the constrained vertices
+            arap(
+                &staticMesh.BindPoseCPUPositions->data()->x, &staticMesh.CPUPositions->data()->x, (int)staticMesh.CPUPositions->size(),
+                (const int*)staticMesh.Halfedge->Vertices.data(),
+                (const int*)staticMesh.Halfedge->Halfedges.data(),
+                staticMesh.EdgeWeights->data(),
+                staticMesh.ARAPSystemMatrix->data(),
+                staticMesh.ConstrainedVertexIDs->data(), (int)staticMesh.ConstrainedVertexIDs->size(),
+                DEFAULT_NUM_ARAP_ITERATIONS);
 
-        memcpy(mapped.pData, cpuPosBuf, staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
+            memcpy(mapped.pData, cpuPosBuf, staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
 
-        dc->Unmap(staticMesh.pPositionVertexBuffer.Get(), 0);
+            dc->Unmap(staticMesh.pPositionVertexBuffer.Get(), 0);
+        }
     }
 
     const float kClearColor[] = {
@@ -1254,14 +1322,13 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
     dc->ClearUnorderedAccessViewUint(g_Scene.pSelectorUAV.Get(), kSelectorClear);
 
     // Draw selection markers
-    if (!g_Scene.SceneNodes.empty() &&
-        g_Scene.SceneNodes[0].Type == SCENENODETYPE_STATICMESH) // assuming first scenenode is the model
+    if (g_Scene.ModelingSceneNodeID != -1) // assuming first scenenode is the model
     {
         ID3D11RenderTargetView* selectorRTVs[] = { pBackBufferRTV, g_Scene.pSceneNormalRTV.Get(), g_Scene.pSelectorRTV.Get() };
         ID3D11DepthStencilView* selectorDSV = g_Scene.pSceneDepthDSV.Get();
         dc->OMSetRenderTargets(_countof(selectorRTVs), selectorRTVs, selectorDSV);
 
-        const SceneNode& sceneNode = g_Scene.SceneNodes[0];
+        const SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
         const StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
 
         dc->IASetInputLayout(g_Scene.pSelectorSphereInputLayout.Get());
