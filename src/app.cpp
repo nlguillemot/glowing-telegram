@@ -127,3 +127,11 @@ void AppGetClientCursorPos(int* x, int* y)
     if (x) *x = cursorPos.x;
     if (y) *y = cursorPos.y;
 }
+
+bool AppIsKeyPressed(int vkey)
+{
+    if (GetForegroundWindow() != g_App.hWnd)
+        return false;
+
+    return (GetAsyncKeyState(vkey) & 0x8000) != 0;
+}

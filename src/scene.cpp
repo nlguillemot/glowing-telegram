@@ -204,6 +204,7 @@ Scene g_Scene;
 
 static void SceneAddObjMesh(
     const char* filename, const char* mtlbasepath,
+    const char* defaultName = NULL,
     std::vector<int>* newStaticMeshIDs = NULL,
     std::vector<int>* newMaterialIDs = NULL)
 {
@@ -463,7 +464,7 @@ static void SceneAddObjMesh(
             (*edgeWeights)[halfedgeID / 2] = weight;
         }
 
-        arapSystemMatrix->resize(ARAP_PACKED_SYSTEM_SIZE(numVertices));
+        arapSystemMatrix->resize(ARAP_PACKED_SYSTEM_SIZE_IN_FLOATS(numVertices));
 
         // Generate tangents if possible.
         // Note: The handedness of the local coordinate system is stored as +/-1 in the w-coordinate
@@ -583,6 +584,8 @@ static void SceneAddObjMesh(
 
             StaticMesh sm = {};
             sm.Name = shape.name;
+            if (sm.Name.empty() && defaultName)
+                sm.Name = defaultName;
             sm.pPositionVertexBuffer = pPositionBuffer;
             sm.pTexCoordVertexBuffer = pTexCoordBuffer;
             sm.pNormalVertexBuffer = pNormalBuffer;
@@ -616,7 +619,7 @@ static int SceneAddStaticMeshSceneNode(int staticMeshID)
     const StaticMesh& staticMesh = g_Scene.StaticMeshes[staticMeshID];
 
     SceneNode sceneNode;
-    sceneNode.Transform.Scaling = XMVectorSet(1.0f, 1.0f, 1.0f, 0.0f);
+    sceneNode.Transform.Scaling = XMVectorSet(1.0f, 1.0f, 1.0f, 1.0f);
     sceneNode.Transform.RotationOrigin = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
     sceneNode.Transform.RotationQuaternion = XMQuaternionIdentity();
     sceneNode.Transform.Translation = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
@@ -633,9 +636,17 @@ void SceneInit()
     ID3D11Device* dev = RendererGetDevice();
 
     std::vector<std::string> meshesToLoad = {
-        // "dragon"
-        // "teapot"
-        "indorelax"
+        "armadillo_1k",
+        "bar1",
+        "bar2",
+        "bar3",
+        "cactus_highres",
+        "cactus_small",
+        "cylinder_small",
+        // doesn't have perfect indexing "dino",
+        "indorelax",
+        "square_21",
+        "square_21_spikes"
     };
 
     std::vector<int> newStaticMeshIDs;
@@ -643,13 +654,39 @@ void SceneInit()
     {
         std::string meshFolder = "assets/" + meshToLoad + "/";
         std::string meshFile = meshFolder + meshToLoad + ".obj";
-        SceneAddObjMesh(meshFile.c_str(), meshFolder.c_str(), &newStaticMeshIDs);
+        SceneAddObjMesh(meshFile.c_str(), meshFolder.c_str(), meshToLoad.c_str(), &newStaticMeshIDs);
     }
 
     for (int newStaticMeshID : newStaticMeshIDs)
     {
-        SceneAddStaticMeshSceneNode(newStaticMeshID);
+        int sceneNodeID = SceneAddStaticMeshSceneNode(newStaticMeshID);
+
+        SceneNode& sceneNode = g_Scene.SceneNodes[sceneNodeID];
+
+        std::string name = g_Scene.StaticMeshes[newStaticMeshID].Name;
+
+        if (name == "armadillo_1k")
+        {
+            sceneNode.Transform.RotationQuaternion = XMQuaternionRotationRollPitchYaw(0.0f, XMConvertToRadians(180.0f), 0.0f);
+        }
+        else if (name == "bar1" || name == "bar2")
+        {
+            sceneNode.Transform.Scaling = XMVectorSet(1.0f / 150.0f, 1.0f / 150.0f, 1.0f / 150.0f, 1.0f);
+        }
+        else if (name == "cactus_highres" || name == "cactus_small")
+        {
+            sceneNode.Transform.Translation = XMVectorSet(-0.5f, -0.5f, 0.5f, 0.0f);
+            sceneNode.Transform.RotationQuaternion = XMQuaternionRotationRollPitchYaw(XMConvertToRadians(-90.0f), 0.0f, 0.0f);
+        }
+        else if (name == "square_21_spikes")
+        {
+            sceneNode.Transform.Translation = XMVectorSet(-40.0f, -13.0f, 0.0f, 0.0f);
+            sceneNode.Transform.RotationQuaternion = XMQuaternionRotationRollPitchYaw(XMConvertToRadians(-90.0f), 0.0f, 0.0f);
+            sceneNode.Transform.RotationOrigin = -sceneNode.Transform.Translation;
+        }
     }
+
+    g_Scene.ModelingSceneNodeID = 0;
 
     g_Scene.SceneVS = RendererAddShader("scene.hlsl", "VSmain", "vs_5_0");
     g_Scene.SceneGS = RendererAddShader("scene.hlsl", "GSmain", "gs_5_0");
@@ -914,7 +951,7 @@ bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_LBUTTONDOWN)
     {
-        if (!GetAsyncKeyState(VK_RBUTTON)) // don't pick when in camera mode
+        if (!AppIsKeyPressed(VK_RBUTTON)) // don't pick when in camera mode
         {
             UINT32 pickVertexID = PickSelector(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
             printf("pickVertexID: %u\n", pickVertexID);
@@ -932,13 +969,19 @@ bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
                     auto found = std::find(begin(*staticMesh.ConstrainedVertexIDs), end(*staticMesh.ConstrainedVertexIDs), (int)pickVertexID);
 
-                    if (GetAsyncKeyState('C')) // toggle control vertices
+                    if (AppIsKeyPressed('C')) // toggle control vertices
                     {
                         // toggle constrained status
                         if (found == end(*staticMesh.ConstrainedVertexIDs))
+                        {
+                            printf("Adding %d to constrained vertices\n", (int)pickVertexID);
                             staticMesh.ConstrainedVertexIDs->push_back((int)pickVertexID);
+                        }
                         else
+                        {
+                            printf("Removing %d from constrained vertices\n", (int)pickVertexID);
                             staticMesh.ConstrainedVertexIDs->erase(found);
+                        }
 
                         staticMesh.SystemMatrixNeedsRebuild = true;
                     }
@@ -985,6 +1028,12 @@ static void SceneShowToolboxGUI()
                 staticMesh.SystemMatrixNeedsRebuild = false;
             }
 
+            if (ImGui::Button("Reset Constraints"))
+            {
+                staticMesh.ConstrainedVertexIDs->clear();
+                staticMesh.SystemMatrixNeedsRebuild = true;
+            }
+
             if (ImGui::Button("Reset Bind Pose"))
             {
                 ID3D11DeviceContext* dc = RendererGetDeviceContext();
@@ -996,6 +1045,18 @@ static void SceneShowToolboxGUI()
                 memcpy(mapped.pData, staticMesh.CPUPositions->data(), staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
 
                 dc->Unmap(staticMesh.pPositionVertexBuffer.Get(), 0);
+            }
+
+            std::vector<const char*> modelNames;
+            for (int i = 0; i < (int)g_Scene.SceneNodes.size(); i++)
+            {
+                assert(g_Scene.SceneNodes[i].Type == SCENENODETYPE_STATICMESH);
+                const StaticMesh& sm = g_Scene.StaticMeshes[g_Scene.SceneNodes[i].AsStaticMesh.StaticMeshID];
+                modelNames.push_back(sm.Name.c_str());
+            }
+            if (ImGui::ListBox("Model", &g_Scene.ModelingSceneNodeID, modelNames.data(), (int)modelNames.size()))
+            {
+                g_Scene.DragVertexID = -1;
             }
         }
     }
@@ -1030,7 +1091,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
     int deltaMouseX = currMouseX - g_Scene.LastMouseX;
     int deltaMouseY = currMouseY - g_Scene.LastMouseY;
 
-    if (!GetAsyncKeyState(VK_LBUTTON))
+    if (!AppIsKeyPressed(VK_LBUTTON))
     {
         g_Scene.DragVertexID = -1;
     }
@@ -1043,7 +1104,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
     XMStoreFloat3(&cameraUp, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
     static const float kCameraUp[3] = { 0.0f, 1.0f, 0.0f };
     {
-        float activated = GetAsyncKeyState(VK_RBUTTON) ? 1.0f : 0.0f;
+        float activated = AppIsKeyPressed(VK_RBUTTON) ? 1.0f : 0.0f;
         XMFLOAT4X4 worldView;
         if (activated)
             flythrough_camera_update(
@@ -1052,12 +1113,12 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
                 &cameraUp.x,
                 &worldView.m[0][0],
                 deltaTicks / (float)ticksPerSecond,
-                1.0f * (GetAsyncKeyState(VK_LSHIFT) ? 3.0f : 1.0f) * activated,
+                1.0f * (AppIsKeyPressed(VK_LSHIFT) ? 3.0f : 1.0f) * activated,
                 0.5f * activated,
                 80.0f,
                 deltaMouseX, deltaMouseY,
-                GetAsyncKeyState('W'), GetAsyncKeyState('A'), GetAsyncKeyState('S'), GetAsyncKeyState('D'),
-                GetAsyncKeyState(VK_SPACE), GetAsyncKeyState(VK_LCONTROL),
+                AppIsKeyPressed('W'), AppIsKeyPressed('A'), AppIsKeyPressed('S'), AppIsKeyPressed('D'),
+                AppIsKeyPressed(VK_SPACE), AppIsKeyPressed(VK_LCONTROL),
                 FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
         else
             flythrough_camera_look_to(&g_Scene.CameraPos.x, &g_Scene.CameraLook.x, &cameraUp.x, &worldView.m[0][0], FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
@@ -1114,7 +1175,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
             for (int c = 0; c < (int)staticMesh.ConstrainedVertexIDs->size(); c++)
             {
                 int i = (*staticMesh.ConstrainedVertexIDs)[c];
-                XMStoreFloat3(&cpuPosBuf[i], XMLoadFloat3(&cpuPosBuf[i]) + movement);
+                //XMStoreFloat3(&cpuPosBuf[i], XMLoadFloat3(&cpuPosBuf[i]) + movement);
             }
 
             D3D11_MAPPED_SUBRESOURCE mapped;
@@ -1187,6 +1248,9 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         int currMaterialID = -2;
         for (int sceneNodeID = 0; sceneNodeID < (int)g_Scene.SceneNodes.size(); sceneNodeID++)
         {
+            if (sceneNodeID != g_Scene.ModelingSceneNodeID)
+                continue;
+
             SceneNode& sceneNode = g_Scene.SceneNodes[sceneNodeID];
 
             // Update Material CBV
@@ -1322,7 +1386,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
     dc->ClearUnorderedAccessViewUint(g_Scene.pSelectorUAV.Get(), kSelectorClear);
 
     // Draw selection markers
-    if (g_Scene.ModelingSceneNodeID != -1) // assuming first scenenode is the model
+    if (g_Scene.ModelingSceneNodeID != -1)
     {
         ID3D11RenderTargetView* selectorRTVs[] = { pBackBufferRTV, g_Scene.pSceneNormalRTV.Get(), g_Scene.pSelectorRTV.Get() };
         ID3D11DepthStencilView* selectorDSV = g_Scene.pSceneDepthDSV.Get();

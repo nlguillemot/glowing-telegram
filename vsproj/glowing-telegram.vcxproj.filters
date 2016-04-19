@@ -35,8 +35,12 @@
     <ClInclude Include="..\src\tiny_obj_loader.h" />
     <ClInclude Include="..\src\arap.h" />
     <ClInclude Include="..\src\halfedge.h" />
-    <ClInclude Include="..\src\svd3.h" />
     <ClInclude Include="..\src\mkl.h" />
+    <ClInclude Include="..\src\Singular_Value_Decomposition_Jacobi_Conjugation_Kernel.hpp" />
+    <ClInclude Include="..\src\Singular_Value_Decomposition_Kernel_Declarations.hpp" />
+    <ClInclude Include="..\src\Singular_Value_Decomposition_Main_Kernel_Body.hpp" />
+    <ClInclude Include="..\src\Singular_Value_Decomposition_Preamble.hpp" />
+    <ClInclude Include="..\src\Singular_Value_Decomposition_Givens_QR_Factorization_Kernel.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="shaders">

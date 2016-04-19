@@ -25,9 +25,9 @@ SamplerState DepthSampler : register(SAMPLER_REGISTER(SSAO_DEPTH_SAMPLER_SLOT));
 SamplerState NoiseSampler : register(SAMPLER_REGISTER(SSAO_NOISE_SAMPLER_SLOT));
 
 // SSAO parameters
-static const float SSAO_Strength = 0.125;
-static const float2 SSAO_Offset = float2(1280.0, 720.0) / 32.0;
-static const float SSAO_Falloff = 0.0002;
+static const float SSAO_Strength = 0.25;
+static const float2 SSAO_Offset = float2(1280.0, 720.0) / 4.0;
+static const float SSAO_Falloff = 0.0000000002;
 static const float SSAO_Radius = 0.4;
 
 #define NUM_SAMPLES 10
