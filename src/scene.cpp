@@ -91,6 +91,7 @@ struct StaticMesh
     std::shared_ptr<std::vector<float>> EdgeWeights;
     std::shared_ptr<std::vector<float>> ARAPSystemMatrix;
     std::shared_ptr<std::vector<int>> ConstrainedVertexIDs;
+    std::shared_ptr<std::vector<int>> VertexConstraintStatuses;
     bool SystemMatrixNeedsRebuild;
 };
 
@@ -358,8 +359,12 @@ static void SceneAddObjMesh(
         std::shared_ptr<std::vector<float>> edgeWeights = std::make_shared<std::vector<float>>();
         std::shared_ptr<std::vector<float>> arapSystemMatrix = std::make_shared<std::vector<float>>();
         std::shared_ptr<std::vector<int>> constrainedVertexIDs = std::make_shared<std::vector<int>>();
+        std::shared_ptr<std::vector<int>> constraintedVertexStatuses = std::make_shared<std::vector<int>>();
 
         int numVertices = (int)mesh.positions.size() / 3;
+
+        // initially nothing is constrained
+        constraintedVertexStatuses->resize(numVertices, 0);
 
         if (!mesh.positions.empty())
         {
@@ -601,6 +606,7 @@ static void SceneAddObjMesh(
             sm.EdgeWeights = edgeWeights;
             sm.ARAPSystemMatrix = arapSystemMatrix;
             sm.ConstrainedVertexIDs = constrainedVertexIDs;
+            sm.VertexConstraintStatuses = constraintedVertexStatuses;
             sm.SystemMatrixNeedsRebuild = true;
 
             if (newStaticMeshIDs)
@@ -976,11 +982,13 @@ bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         {
                             printf("Adding %d to constrained vertices\n", (int)pickVertexID);
                             staticMesh.ConstrainedVertexIDs->push_back((int)pickVertexID);
+                            (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 1;
                         }
                         else
                         {
                             printf("Removing %d from constrained vertices\n", (int)pickVertexID);
                             staticMesh.ConstrainedVertexIDs->erase(found);
+                            (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 0;
                         }
 
                         staticMesh.SystemMatrixNeedsRebuild = true;
@@ -1020,9 +1028,10 @@ static void SceneShowToolboxGUI()
             {
                 arap_factorize_system(
                     (int)staticMesh.CPUPositions->size(),
+                    staticMesh.VertexConstraintStatuses->data(),
+                    (const int*)staticMesh.Halfedge->Vertices.data(),
                     (const int*)staticMesh.Halfedge->Halfedges.data(),
-                    staticMesh.EdgeWeights->data(), (int)staticMesh.EdgeWeights->size(),
-                    staticMesh.ConstrainedVertexIDs->data(), (int)staticMesh.ConstrainedVertexIDs->size(),
+                    staticMesh.EdgeWeights->data(),
                     staticMesh.ARAPSystemMatrix->data());
 
                 staticMesh.SystemMatrixNeedsRebuild = false;
@@ -1031,6 +1040,8 @@ static void SceneShowToolboxGUI()
             if (ImGui::Button("Reset Constraints"))
             {
                 staticMesh.ConstrainedVertexIDs->clear();
+                staticMesh.VertexConstraintStatuses->clear();
+                staticMesh.VertexConstraintStatuses->resize(staticMesh.CPUPositions->size(), 0);
                 staticMesh.SystemMatrixNeedsRebuild = true;
             }
 
@@ -1175,7 +1186,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
             for (int c = 0; c < (int)staticMesh.ConstrainedVertexIDs->size(); c++)
             {
                 int i = (*staticMesh.ConstrainedVertexIDs)[c];
-                //XMStoreFloat3(&cpuPosBuf[i], XMLoadFloat3(&cpuPosBuf[i]) + movement);
+                XMStoreFloat3(&cpuPosBuf[i], XMLoadFloat3(&cpuPosBuf[i]) + movement);
             }
 
             D3D11_MAPPED_SUBRESOURCE mapped;
@@ -1183,12 +1194,12 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
             // update the mesh as rigidly as possible based on the constrained vertices
             arap(
-                &staticMesh.BindPoseCPUPositions->data()->x, &staticMesh.CPUPositions->data()->x, (int)staticMesh.CPUPositions->size(),
+                (int)staticMesh.CPUPositions->size(), &staticMesh.BindPoseCPUPositions->data()->x, &staticMesh.CPUPositions->data()->x,
+                staticMesh.VertexConstraintStatuses->data(),
                 (const int*)staticMesh.Halfedge->Vertices.data(),
                 (const int*)staticMesh.Halfedge->Halfedges.data(),
                 staticMesh.EdgeWeights->data(),
                 staticMesh.ARAPSystemMatrix->data(),
-                staticMesh.ConstrainedVertexIDs->data(), (int)staticMesh.ConstrainedVertexIDs->size(),
                 DEFAULT_NUM_ARAP_ITERATIONS);
 
             memcpy(mapped.pData, cpuPosBuf, staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
