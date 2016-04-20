@@ -719,15 +719,20 @@ void SceneInit()
         else if (name == "bar1" || name == "bar2")
         {
             sceneNode.Transform.Scaling = XMVectorSet(1.0f / 150.0f, 1.0f / 150.0f, 1.0f / 150.0f, 1.0f);
+            sceneNode.Transform.Translation = XMVectorSet(-0.1f, -0.4f, 0.3f, 0.0f);
         }
         else if (name == "cactus_highres" || name == "cactus_small")
         {
-            sceneNode.Transform.Translation = XMVectorSet(-0.5f, -0.5f, 0.5f, 0.0f);
-            sceneNode.Transform.RotationQuaternion = XMQuaternionRotationRollPitchYaw(XMConvertToRadians(-90.0f), 0.0f, 0.0f);
+            sceneNode.Transform.Translation = XMVectorSet(0.5f, -0.5f, 0.7f, 0.0f);
+            sceneNode.Transform.RotationQuaternion = XMQuaternionRotationRollPitchYaw(XMConvertToRadians(-90.0f), XMConvertToRadians(90.0f), 0.0f);
+        }
+        else if (name == "square_21")
+        {
+            sceneNode.Transform.Translation = XMVectorSet(-0.5f, -0.5f, 0.0f, 0.0f);
         }
         else if (name == "square_21_spikes")
         {
-            sceneNode.Transform.Translation = XMVectorSet(-40.0f, -13.0f, 0.0f, 0.0f);
+            sceneNode.Transform.Translation = XMVectorSet(-40.5f, -13.4f, -0.5f, 0.0f);
             sceneNode.Transform.RotationQuaternion = XMQuaternionRotationRollPitchYaw(XMConvertToRadians(-90.0f), 0.0f, 0.0f);
             sceneNode.Transform.RotationOrigin = -sceneNode.Transform.Translation;
         }
