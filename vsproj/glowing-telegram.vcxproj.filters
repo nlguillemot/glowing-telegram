@@ -66,4 +66,9 @@
     <Library Include="..\src\blas.lib" />
     <Library Include="..\src\clapack.lib" />
   </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="..\shaders\roi.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+  </ItemGroup>
 </Project>

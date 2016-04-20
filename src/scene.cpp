@@ -100,7 +100,7 @@ struct StaticMesh
     std::shared_ptr<HalfedgeMesh> Halfedge;
     std::shared_ptr<std::vector<float>> EdgeWeights;
     std::shared_ptr<std::vector<float>> ARAPSystemMatrix;
-    std::shared_ptr<std::vector<int>> ConstrainedVertexIDs;
+    std::shared_ptr<std::vector<int>> HandleVertexIDs;
     std::shared_ptr<std::vector<int>> VertexConstraintStatuses;
     bool SystemMatrixNeedsRebuild;
 };
@@ -161,7 +161,9 @@ struct Scene
 
     XMFLOAT3 CameraPos;
     XMFLOAT3 CameraLook;
+    XMMATRIX CameraWorldViewProjection;
     ComPtr<ID3D11Buffer> pCameraBuffer;
+    ComPtr<ID3D11Buffer> pViewportBuffer;
     ComPtr<ID3D11Buffer> pMaterialBuffer;
     ComPtr<ID3D11Buffer> pSceneNodeBuffer;
 
@@ -204,11 +206,26 @@ struct Scene
     Shader* SelectorGS;
     Shader* SelectorPS;
 
+    ComPtr<ID3D11Buffer> pROISelectorBuffer;
+    int ROISelectorBufferSizeInBytes;
+
+    ComPtr<ID3D11InputLayout> pROIInputLayout;
+    ComPtr<ID3D11RasterizerState> pROIRasterizerState;
+    ComPtr<ID3D11DepthStencilState> pROIDepthStencilState;
+    ComPtr<ID3D11BlendState> pROIBlendState;
+
+    Shader* ROIVS;
+    Shader* ROIGS;
+    Shader* ROIPS;
+
     uint64_t LastTicks;
     int LastMouseX, LastMouseY;
 
     int ModelingSceneNodeID;
     int DragVertexID;
+
+    bool ROISelectionActive;
+    std::vector<XMFLOAT2> ROISelectionPoints;
 };
 
 Scene g_Scene;
@@ -369,7 +386,7 @@ static void SceneAddObjMesh(
         std::shared_ptr<HalfedgeMesh> halfedge = std::make_shared<HalfedgeMesh>();
         std::shared_ptr<std::vector<float>> edgeWeights = std::make_shared<std::vector<float>>();
         std::shared_ptr<std::vector<float>> arapSystemMatrix = std::make_shared<std::vector<float>>();
-        std::shared_ptr<std::vector<int>> constrainedVertexIDs = std::make_shared<std::vector<int>>();
+        std::shared_ptr<std::vector<int>> handleVertexIDs = std::make_shared<std::vector<int>>();
         std::shared_ptr<std::vector<int>> constraintedVertexStatuses = std::make_shared<std::vector<int>>();
 
         int numVertices = (int)mesh.positions.size() / 3;
@@ -629,7 +646,7 @@ static void SceneAddObjMesh(
             sm.Halfedge = halfedge;
             sm.EdgeWeights = edgeWeights;
             sm.ARAPSystemMatrix = arapSystemMatrix;
-            sm.ConstrainedVertexIDs = constrainedVertexIDs;
+            sm.HandleVertexIDs = handleVertexIDs;
             sm.VertexConstraintStatuses = constraintedVertexStatuses;
             sm.SystemMatrixNeedsRebuild = true;
 
@@ -726,6 +743,9 @@ void SceneInit()
     g_Scene.SelectorVS = RendererAddShader("selector.hlsl", "VSmain", "vs_5_0");
     g_Scene.SelectorGS = RendererAddShader("selector.hlsl", "GSmain", "gs_5_0");
     g_Scene.SelectorPS = RendererAddShader("selector.hlsl", "PSmain", "ps_5_0");
+    g_Scene.ROIVS = RendererAddShader("roi.hlsl", "VSmain", "vs_5_0");
+    g_Scene.ROIGS = RendererAddShader("roi.hlsl", "GSmain", "gs_5_0");
+    g_Scene.ROIPS = RendererAddShader("roi.hlsl", "PSmain", "ps_5_0");
 
     // XMStoreFloat3(&g_Scene.CameraPos, XMVectorSet(-100.0f, 100.0f, -100.0f, 1.0f));
     XMStoreFloat3(&g_Scene.CameraPos, XMVectorSet(0.0f, 0.4f, 0.7f, 1.0f));
@@ -747,6 +767,11 @@ void SceneInit()
         &CD3D11_BUFFER_DESC(sizeof(PerCameraData), D3D11_BIND_CONSTANT_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE),
         NULL,
         &g_Scene.pCameraBuffer));
+
+    CHECKHR(dev->CreateBuffer(
+        &CD3D11_BUFFER_DESC(sizeof(PerViewportData), D3D11_BIND_CONSTANT_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE),
+        NULL,
+        &g_Scene.pViewportBuffer));
 
     CHECKHR(dev->CreateBuffer(
         &CD3D11_BUFFER_DESC(sizeof(PerMaterialData), D3D11_BIND_CONSTANT_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE),
@@ -890,6 +915,38 @@ void SceneInit()
             &g_Scene.pCurrSelectedVertexID));
     }
 
+    // ROI
+    {
+        D3D11_INPUT_ELEMENT_DESC roiInputElementDescs[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+        };
+
+        CHECKHR(dev->CreateInputLayout(
+            roiInputElementDescs, _countof(roiInputElementDescs),
+            g_Scene.ROIVS->Blob->GetBufferPointer(), g_Scene.ROIVS->Blob->GetBufferSize(),
+            &g_Scene.pROIInputLayout));
+
+        D3D11_RASTERIZER_DESC roiRasterizerDesc = CD3D11_RASTERIZER_DESC(D3D11_DEFAULT);
+        CHECKHR(dev->CreateRasterizerState(&roiRasterizerDesc, &g_Scene.pROIRasterizerState));
+
+        D3D11_DEPTH_STENCIL_DESC roiDepthStencilDesc = CD3D11_DEPTH_STENCIL_DESC(D3D11_DEFAULT);
+        roiDepthStencilDesc.DepthEnable = FALSE;
+        CHECKHR(dev->CreateDepthStencilState(&roiDepthStencilDesc, &g_Scene.pROIDepthStencilState));
+
+        D3D11_BLEND_DESC roiBlendDesc = CD3D11_BLEND_DESC(D3D11_DEFAULT);
+        roiBlendDesc.RenderTarget[0].BlendEnable = TRUE;
+        roiBlendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+        roiBlendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        CHECKHR(dev->CreateBlendState(&roiBlendDesc, &g_Scene.pROIBlendState));
+
+        // decent initial size
+        g_Scene.ROISelectorBufferSizeInBytes = sizeof(XMFLOAT2) * 10;
+        CHECKHR(dev->CreateBuffer(
+            &CD3D11_BUFFER_DESC(g_Scene.ROISelectorBufferSizeInBytes, D3D11_BIND_VERTEX_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE),
+            NULL,
+            &g_Scene.pROISelectorBuffer));
+    }
+
     g_Scene.LastMouseX = INT_MIN;
     g_Scene.LastMouseY = INT_MIN;
 
@@ -983,67 +1040,217 @@ static UINT32 PickSelector(int x, int y)
 
 bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    if (msg == WM_KEYDOWN && wParam == VK_SPACE)
+    {
+        if (g_Scene.ROISelectionActive)
+        {
+            // mark all the points inside the selection as ROI, outside as non-ROI
+            if (g_Scene.ROISelectionPoints.size() >= 3 && g_Scene.ModelingSceneNodeID != -1)
+            {
+                SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
+                StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
+
+                // tie the loop
+                {
+                    XMFLOAT2 firstPoint = g_Scene.ROISelectionPoints.front();
+                    g_Scene.ROISelectionPoints.push_back(firstPoint);
+                }
+
+                // Convert points to clip space
+                std::vector<XMVECTOR> roiClipSpacePoints(g_Scene.ROISelectionPoints.size());
+                for (int pointID = 0; pointID < (int)g_Scene.ROISelectionPoints.size(); pointID++)
+                {
+                    // grab normalized coordinates (texcoord coordinates)
+                    XMVECTOR p = XMLoadFloat2(&g_Scene.ROISelectionPoints[pointID]);
+
+                    // convert texcoord coordinates to clip space
+                    p = XMVectorSetY(p, 1.0f - XMVectorGetY(p)) * XMVectorSet(2.0f, 2.0f, 1.0f, 1.0f) - XMVectorSet(1.0f, 1.0f, 0.0f, 0.0f);
+                    
+                    roiClipSpacePoints[pointID] = p;
+                }
+
+                for (int vertexID = 0; vertexID < (int)staticMesh.CPUPositions->size(); vertexID++)
+                {
+                    // convert vertex to clip space
+                    XMMATRIX transform = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, sceneNode.Transform.Translation);
+                    XMVECTOR modelPos = XMVectorSetW(XMLoadFloat3(&(*staticMesh.CPUPositions)[vertexID]), 1.0f);
+                    XMVECTOR worldPos = XMVector4Transform(modelPos, transform);
+                    XMVECTOR clipPos = XMVector4Transform(worldPos, g_Scene.CameraWorldViewProjection);
+
+                    float cx = XMVectorGetX(clipPos);
+                    float cy = XMVectorGetY(clipPos);
+                    float cz = XMVectorGetZ(clipPos);
+                    float cw = XMVectorGetW(clipPos);
+
+                    // clipping for stuff behind the camera
+                    if (cz < 0.0f)
+                    {
+                        // clipped, so constrained
+                        (*staticMesh.VertexConstraintStatuses)[vertexID] = 1;
+                        continue;
+                    }
+
+                    // convert to screen coordinates
+                    float v_sx = g_Scene.SceneViewport.TopLeftX + (cx / cw + 1.0f) / 2.0f * g_Scene.SceneViewport.Width;
+                    float v_sy = g_Scene.SceneViewport.TopLeftY + g_Scene.SceneViewport.Height - (cy / cw + 1.0f) / 2.0f * g_Scene.SceneViewport.Height;
+
+                    int numIntersections = 0;
+
+                    for (int lineID = 0; lineID < (int)g_Scene.ROISelectionPoints.size() - 1; lineID++)
+                    {
+                        // grab clip space line coordinates
+                        XMVECTOR p0 = roiClipSpacePoints[lineID];
+                        XMVECTOR p1 = roiClipSpacePoints[lineID + 1];
+
+                        // convert to screen coordinates
+                        float v_p0x = g_Scene.SceneViewport.TopLeftX + (XMVectorGetX(p0) + 1.0f) / 2.0f * g_Scene.SceneViewport.Width;
+                        float v_p0y = g_Scene.SceneViewport.TopLeftY + g_Scene.SceneViewport.Height - (XMVectorGetY(p0) + 1.0f) / 2.0f * g_Scene.SceneViewport.Height;
+                        float v_p1x = g_Scene.SceneViewport.TopLeftX + (XMVectorGetX(p1) + 1.0f) / 2.0f * g_Scene.SceneViewport.Width;
+                        float v_p1y = g_Scene.SceneViewport.TopLeftY + g_Scene.SceneViewport.Height - (XMVectorGetY(p1) + 1.0f) / 2.0f * g_Scene.SceneViewport.Height;
+
+                        // make p0 always the higher line (for convenience)
+                        if (v_p0y > v_p1y)
+                        {
+                            std::swap(v_p0x, v_p1x);
+                            std::swap(v_p0y, v_p1y);
+                        }
+
+                        // check if the y-range of the line overlaps the vertex
+                        if (v_p0y <= v_sy && v_sy <= v_p1y)
+                        {
+                            // find intersection of line and vertex through similar triangles
+                            float y_vdist = v_sy - v_p0y;
+                            float y_len = v_p1y - v_p0y;
+                            float x_len = v_p1x - v_p0x;
+                            float x_vdist = y_vdist / y_len * x_len;
+
+                            // here's the intersection
+                            float isect_x = v_p0x + x_vdist;
+                            float isect_y = v_sy;
+
+                            if (isect_x < v_sx)
+                            {
+                                numIntersections++;
+                            }
+                        }
+                    }
+
+                    // odd number of lines to the left of the vertex means the vertex is inside
+                    if (numIntersections % 2 == 1)
+                    {
+                        // inside: not constrained
+                        (*staticMesh.VertexConstraintStatuses)[vertexID] = 0;
+                    }
+                    else
+                    {
+                        // outside: constrained
+                        (*staticMesh.VertexConstraintStatuses)[vertexID] = 1;
+                    }
+                }
+
+                // set colors based on constraint status
+                ID3D11Device* dev = RendererGetDevice();
+                ID3D11DeviceContext* dc = RendererGetDeviceContext();
+
+                D3D11_MAPPED_SUBRESOURCE mappedColors;
+                CHECKHR(dc->Map(staticMesh.pSelectorColorVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedColors));
+
+                VertexSelectorColor* colors = (VertexSelectorColor*)mappedColors.pData;
+
+                for (int vertexID = 0; vertexID < (int)staticMesh.CPUPositions->size(); vertexID++)
+                {
+                    if ((*staticMesh.VertexConstraintStatuses)[vertexID])
+                        colors[vertexID] = VertexSelectorColor{ kFixedVertexColor };
+                    else
+                        colors[vertexID] = VertexSelectorColor{ kUnselectedVertexColor };
+                }
+
+                dc->Unmap(staticMesh.pSelectorColorVertexBuffer.Get(), 0);
+            }
+
+            g_Scene.ROISelectionActive = false;
+            g_Scene.ROISelectionPoints.clear();
+        }
+    }
+
     if (msg == WM_LBUTTONDOWN)
     {
         if (!AppIsKeyPressed(VK_RBUTTON)) // don't pick when in camera mode
         {
-            UINT32 pickVertexID = PickSelector(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            printf("pickVertexID: %u\n", pickVertexID);
-
-            if (pickVertexID == UINT_MAX)
+            if (g_Scene.ROISelectionActive)
             {
-                g_Scene.DragVertexID = -1;
+                // Adding a point to the ROI selection
+                RECT clientRect;
+                CHECKWIN32(GetClientRect(hWnd, &clientRect));
+
+                XMFLOAT2 normalizedPoint = {
+                    (float)GET_X_LPARAM(lParam) / (clientRect.right - clientRect.left),
+                    (float)GET_Y_LPARAM(lParam) / (clientRect.bottom - clientRect.top)
+                };
+
+                g_Scene.ROISelectionPoints.push_back(normalizedPoint);
             }
             else
             {
-                if (g_Scene.ModelingSceneNodeID != -1)
+                // Vertex picking mode
+                UINT32 pickVertexID = PickSelector(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+                printf("pickVertexID: %u\n", pickVertexID);
+
+                if (pickVertexID == UINT_MAX)
                 {
-                    SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
-                    StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
-
-                    auto found = std::find(begin(*staticMesh.ConstrainedVertexIDs), end(*staticMesh.ConstrainedVertexIDs), (int)pickVertexID);
-
-                    if (AppIsKeyPressed('C')) // toggle control vertices
+                    g_Scene.DragVertexID = -1;
+                }
+                else
+                {
+                    if (g_Scene.ModelingSceneNodeID != -1)
                     {
-                        ID3D11Device* dev = RendererGetDevice();
-                        ID3D11DeviceContext* dc = RendererGetDeviceContext();
+                        SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
+                        StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
 
-                        XMFLOAT4 newColor;
+                        auto found = std::find(begin(*staticMesh.HandleVertexIDs), end(*staticMesh.HandleVertexIDs), (int)pickVertexID);
 
-                        // toggle constrained status
-                        if (found == end(*staticMesh.ConstrainedVertexIDs))
+                        if (AppIsKeyPressed('C')) // toggle control vertices
                         {
-                            printf("Adding %d to constrained vertices\n", (int)pickVertexID);
-                            staticMesh.ConstrainedVertexIDs->push_back((int)pickVertexID);
-                            (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 1;
-                            newColor = kHandleVertexColor;
+                            ID3D11Device* dev = RendererGetDevice();
+                            ID3D11DeviceContext* dc = RendererGetDeviceContext();
+
+                            XMFLOAT4 newColor;
+
+                            // toggle constrained status
+                            if (found == end(*staticMesh.HandleVertexIDs))
+                            {
+                                printf("Adding %d to constrained vertices\n", (int)pickVertexID);
+                                staticMesh.HandleVertexIDs->push_back((int)pickVertexID);
+                                (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 1;
+                                newColor = kHandleVertexColor;
+                            }
+                            else
+                            {
+                                printf("Removing %d from constrained vertices\n", (int)pickVertexID);
+                                staticMesh.HandleVertexIDs->erase(found);
+                                (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 0;
+                                newColor = kUnselectedVertexColor;
+                            }
+
+                            D3D11_SUBRESOURCE_DATA newColorData = {};
+                            newColorData.pSysMem = &newColor;
+
+                            ComPtr<ID3D11Buffer> pNewColorBuffer;
+                            CHECKHR(dev->CreateBuffer(
+                                &CD3D11_BUFFER_DESC(sizeof(VertexSelectorColor), 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_WRITE),
+                                &newColorData,
+                                &pNewColorBuffer));
+
+                            dc->CopySubresourceRegion(staticMesh.pSelectorColorVertexBuffer.Get(), 0, sizeof(VertexSelectorColor) * pickVertexID, 0, 0, pNewColorBuffer.Get(), 0, NULL);
+
+                            staticMesh.SystemMatrixNeedsRebuild = true;
                         }
                         else
                         {
-                            printf("Removing %d from constrained vertices\n", (int)pickVertexID);
-                            staticMesh.ConstrainedVertexIDs->erase(found);
-                            (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 0;
-                            newColor = kUnselectedVertexColor;
+                            // new vertex to drag for modeling
+                            if (found != end(*staticMesh.HandleVertexIDs))
+                                g_Scene.DragVertexID = (int)pickVertexID;
                         }
-
-                        D3D11_SUBRESOURCE_DATA newColorData = {};
-                        newColorData.pSysMem = &newColor;
-
-                        ComPtr<ID3D11Buffer> pNewColorBuffer;
-                        CHECKHR(dev->CreateBuffer(
-                            &CD3D11_BUFFER_DESC(sizeof(VertexSelectorColor), 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_WRITE),
-                            &newColorData,
-                            &pNewColorBuffer));
-
-                        dc->CopySubresourceRegion(staticMesh.pSelectorColorVertexBuffer.Get(), 0, sizeof(VertexSelectorColor) * pickVertexID, 0, 0, pNewColorBuffer.Get(), 0, NULL);
-
-                        staticMesh.SystemMatrixNeedsRebuild = true;
-                    }
-                    else
-                    {
-                        // new vertex to drag for modeling
-                        if (found != end(*staticMesh.ConstrainedVertexIDs))
-                            g_Scene.DragVertexID = (int)pickVertexID;
                     }
                 }
             }
@@ -1070,6 +1277,12 @@ static void SceneShowToolboxGUI()
             SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
             StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
 
+            if (ImGui::Button("Select Region of Interest"))
+            {
+                g_Scene.ROISelectionActive = true;
+                g_Scene.ROISelectionPoints.clear();
+            }
+
             if (ImGui::Button("Refactorize ARAP"))
             {
                 arap_factorize_system(
@@ -1085,7 +1298,7 @@ static void SceneShowToolboxGUI()
 
             if (ImGui::Button("Reset Constraints"))
             {
-                staticMesh.ConstrainedVertexIDs->clear();
+                staticMesh.HandleVertexIDs->clear();
                 staticMesh.VertexConstraintStatuses->clear();
                 staticMesh.VertexConstraintStatuses->resize(staticMesh.CPUPositions->size(), 0);
                 staticMesh.SystemMatrixNeedsRebuild = true;
@@ -1186,6 +1399,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         CHECKHR(dc->Map(g_Scene.pCameraBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera));
 
         XMMATRIX worldViewProjection = XMMatrixMultiply(XMLoadFloat4x4(&worldView), g_Scene.SceneProjection);
+        g_Scene.CameraWorldViewProjection = worldViewProjection;
 
         PerCameraData* camera = (PerCameraData*)mappedCamera.pData;
         XMStoreFloat4x4(&camera->WorldViewProjection, XMMatrixTranspose(worldViewProjection));
@@ -1194,6 +1408,17 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         XMStoreFloat4(&camera->Up, XMLoadFloat3(&cameraUp));
 
         dc->Unmap(g_Scene.pCameraBuffer.Get(), 0);
+    }
+
+    // Update viewport
+    {
+        D3D11_MAPPED_SUBRESOURCE mappedViewport;
+        CHECKHR(dc->Map(g_Scene.pViewportBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedViewport));
+
+        PerViewportData* viewport = (PerViewportData*)mappedViewport.pData;
+        XMStoreFloat4(&viewport->Size, XMVectorSet(g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, 0.0, 0.0));
+
+        dc->Unmap(g_Scene.pViewportBuffer.Get(), 0);
     }
 
     // Update dragged vertex and mesh with it
@@ -1228,10 +1453,10 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
             XMVECTOR movement = newUnprojected - oldUnprojected;
 
-            // set positions of constrained vertices
-            for (int c = 0; c < (int)staticMesh.ConstrainedVertexIDs->size(); c++)
+            // set positions of handle vertices
+            for (int c = 0; c < (int)staticMesh.HandleVertexIDs->size(); c++)
             {
-                int i = (*staticMesh.ConstrainedVertexIDs)[c];
+                int i = (*staticMesh.HandleVertexIDs)[c];
                 XMStoreFloat3(&cpuPosBuf[i], XMLoadFloat3(&cpuPosBuf[i]) + movement);
             }
 
@@ -1535,7 +1760,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         dc->PSSetSamplers(SSAO_NOISE_SAMPLER_SLOT, 1, &noiseSMP);
 
         dc->IASetVertexBuffers(0, 0, NULL, NULL, NULL);
-        dc->IASetIndexBuffer(NULL, (DXGI_FORMAT)0, 0);
+        dc->IASetIndexBuffer(NULL, DXGI_FORMAT_UNKNOWN, 0);
 
         dc->Draw(3, 0);
 
@@ -1546,6 +1771,57 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
         dc->OMSetRenderTargets(0, NULL, NULL);
         dc->VSSetShader(NULL, NULL, 0);
+        dc->PSSetShader(NULL, NULL, 0);
+    }
+
+    // Draw ROI selection
+    if (!g_Scene.ROISelectionPoints.empty())
+    {
+        ID3D11RenderTargetView* roiRTVs[] = { pBackBufferRTV };
+        dc->OMSetRenderTargets(_countof(roiRTVs), roiRTVs, NULL);
+
+        dc->VSSetShader(g_Scene.ROIVS->VS, NULL, 0);
+        dc->GSSetShader(g_Scene.ROIGS->GS, NULL, 0);
+        dc->PSSetShader(g_Scene.ROIPS->PS, NULL, 0);
+        dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP);
+        dc->IASetInputLayout(g_Scene.pROIInputLayout.Get());
+        dc->RSSetState(g_Scene.pROIRasterizerState.Get());
+        dc->OMSetDepthStencilState(g_Scene.pROIDepthStencilState.Get(), 0);
+        dc->OMSetBlendState(g_Scene.pROIBlendState.Get(), NULL, UINT_MAX);
+        dc->RSSetViewports(1, &g_Scene.SceneViewport);
+
+        ID3D11Buffer* viewportBuffer = g_Scene.pViewportBuffer.Get();
+        dc->GSSetConstantBuffers(ROI_VIEWPORT_BUFFER_SLOT, 1, &viewportBuffer);
+
+        int sizeRequired = (int)g_Scene.ROISelectionPoints.size() * sizeof(XMFLOAT2);
+        if (g_Scene.ROISelectorBufferSizeInBytes < sizeRequired)
+        {
+            g_Scene.ROISelectorBufferSizeInBytes = sizeRequired * 2;
+
+            CHECKHR(dev->CreateBuffer(
+                &CD3D11_BUFFER_DESC((UINT)g_Scene.ROISelectorBufferSizeInBytes, D3D11_BIND_VERTEX_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE),
+                NULL,
+                &g_Scene.pROISelectorBuffer));
+        }
+
+        D3D11_MAPPED_SUBRESOURCE mappedVertices;
+        CHECKHR(dc->Map(g_Scene.pROISelectorBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedVertices));
+
+        memcpy(mappedVertices.pData, g_Scene.ROISelectionPoints.data(), sizeRequired);
+
+        dc->Unmap(g_Scene.pROISelectorBuffer.Get(), 0);
+        
+        ID3D11Buffer* roiVertexBuffers[] = { g_Scene.pROISelectorBuffer.Get() };
+        UINT roiVertexStrides[] = { sizeof(XMFLOAT2) };
+        UINT roiVertexOffsets[] = { 0 };
+        dc->IASetVertexBuffers(0, _countof(roiVertexBuffers), roiVertexBuffers, roiVertexStrides, roiVertexOffsets);
+        dc->IASetIndexBuffer(NULL, DXGI_FORMAT_UNKNOWN, 0);
+
+        dc->Draw((UINT)g_Scene.ROISelectionPoints.size(), 0);
+
+        dc->OMSetRenderTargets(0, NULL, NULL);
+        dc->VSSetShader(NULL, NULL, 0);
+        dc->GSSetShader(NULL, NULL, 0);
         dc->PSSetShader(NULL, NULL, 0);
     }
 

@@ -63,6 +63,8 @@ struct CurrSelectionData
 #define SELECTOR_SCENENODE_BUFFER_SLOT 1
 #define SELECTOR_CURRSELECTION_BUFFER_SLOT 2
 
+#define ROI_VIEWPORT_BUFFER_SLOT 0
+
 #define BUFFER_REGISTER(slot) b##slot
 #define TEXTURE_REGISTER(slot) t##slot
 #define SAMPLER_REGISTER(slot) s##slot
