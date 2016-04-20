@@ -1873,7 +1873,6 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
     }
 
     // Draw ROI selection
-    if (!g_Scene.ROISelectionPoints.empty())
     {
         ID3D11RenderTargetView* roiRTVs[] = { pBackBufferRTV };
         dc->OMSetRenderTargets(_countof(roiRTVs), roiRTVs, NULL);
@@ -1891,7 +1890,10 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         ID3D11Buffer* viewportBuffer = g_Scene.pViewportBuffer.Get();
         dc->GSSetConstantBuffers(ROI_VIEWPORT_BUFFER_SLOT, 1, &viewportBuffer);
 
-        int sizeRequired = (int)g_Scene.ROISelectionPoints.size() * sizeof(XMFLOAT2);
+        int pointsRequired = (int)g_Scene.ROISelectionPoints.size();
+        pointsRequired += 1; // to show where the cursor is
+
+        int sizeRequired = pointsRequired * sizeof(XMFLOAT2);
         if (g_Scene.ROISelectorBufferSizeInBytes < sizeRequired)
         {
             g_Scene.ROISelectorBufferSizeInBytes = sizeRequired * 2;
@@ -1905,7 +1907,15 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         D3D11_MAPPED_SUBRESOURCE mappedVertices;
         CHECKHR(dc->Map(g_Scene.pROISelectorBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedVertices));
 
-        memcpy(mappedVertices.pData, g_Scene.ROISelectionPoints.data(), sizeRequired);
+        memcpy(mappedVertices.pData, g_Scene.ROISelectionPoints.data(), g_Scene.ROISelectionPoints.size() * sizeof(XMFLOAT2));
+
+        int extraPoints = pointsRequired - (int)g_Scene.ROISelectionPoints.size();
+        for (int extra = 0; extra < extraPoints; extra++)
+        {
+            XMFLOAT2* point = &((XMFLOAT2*)mappedVertices.pData)[g_Scene.ROISelectionPoints.size() + extra];
+            point->x = (currMouseX - g_Scene.SceneViewport.TopLeftX) / g_Scene.SceneViewport.Width;
+            point->y = (currMouseY - g_Scene.SceneViewport.TopLeftY) / g_Scene.SceneViewport.Height;
+        }
 
         dc->Unmap(g_Scene.pROISelectorBuffer.Get(), 0);
         
@@ -1915,7 +1925,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         dc->IASetVertexBuffers(0, _countof(roiVertexBuffers), roiVertexBuffers, roiVertexStrides, roiVertexOffsets);
         dc->IASetIndexBuffer(NULL, DXGI_FORMAT_UNKNOWN, 0);
 
-        dc->Draw((UINT)g_Scene.ROISelectionPoints.size(), 0);
+        dc->Draw((UINT)pointsRequired, 0);
 
         dc->OMSetRenderTargets(0, NULL, NULL);
         dc->VSSetShader(NULL, NULL, 0);
