@@ -100,7 +100,7 @@ struct StaticMesh
     std::shared_ptr<HalfedgeMesh> Halfedge;
     std::shared_ptr<std::vector<float>> EdgeWeights;
     std::shared_ptr<std::vector<float>> ARAPSystemMatrix;
-    std::shared_ptr<std::vector<int>> HandleVertexIDs;
+    std::shared_ptr<std::vector<int>> ControlVertexIDs;
     std::shared_ptr<std::vector<int>> VertexConstraintStatuses;
     bool SystemMatrixNeedsRebuild;
 };
@@ -386,7 +386,7 @@ static void SceneAddObjMesh(
         std::shared_ptr<HalfedgeMesh> halfedge = std::make_shared<HalfedgeMesh>();
         std::shared_ptr<std::vector<float>> edgeWeights = std::make_shared<std::vector<float>>();
         std::shared_ptr<std::vector<float>> arapSystemMatrix = std::make_shared<std::vector<float>>();
-        std::shared_ptr<std::vector<int>> handleVertexIDs = std::make_shared<std::vector<int>>();
+        std::shared_ptr<std::vector<int>> controlVertexIDs = std::make_shared<std::vector<int>>();
         std::shared_ptr<std::vector<int>> constraintedVertexStatuses = std::make_shared<std::vector<int>>();
 
         int numVertices = (int)mesh.positions.size() / 3;
@@ -646,7 +646,7 @@ static void SceneAddObjMesh(
             sm.Halfedge = halfedge;
             sm.EdgeWeights = edgeWeights;
             sm.ARAPSystemMatrix = arapSystemMatrix;
-            sm.HandleVertexIDs = handleVertexIDs;
+            sm.ControlVertexIDs = controlVertexIDs;
             sm.VertexConstraintStatuses = constraintedVertexStatuses;
             sm.SystemMatrixNeedsRebuild = true;
 
@@ -1166,6 +1166,9 @@ bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 }
 
                 dc->Unmap(staticMesh.pSelectorColorVertexBuffer.Get(), 0);
+
+                staticMesh.ControlVertexIDs->clear();
+                staticMesh.SystemMatrixNeedsRebuild = true;
             }
 
             g_Scene.ROISelectionActive = false;
@@ -1207,7 +1210,7 @@ bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
                         StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
 
-                        auto found = std::find(begin(*staticMesh.HandleVertexIDs), end(*staticMesh.HandleVertexIDs), (int)pickVertexID);
+                        auto found = std::find(begin(*staticMesh.ControlVertexIDs), end(*staticMesh.ControlVertexIDs), (int)pickVertexID);
 
                         if (AppIsKeyPressed('C')) // toggle control vertices
                         {
@@ -1216,18 +1219,18 @@ bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
                             XMFLOAT4 newColor;
 
-                            // toggle constrained status
-                            if (found == end(*staticMesh.HandleVertexIDs))
+                            // toggle control status
+                            if (found == end(*staticMesh.ControlVertexIDs))
                             {
-                                printf("Adding %d to constrained vertices\n", (int)pickVertexID);
-                                staticMesh.HandleVertexIDs->push_back((int)pickVertexID);
+                                printf("Adding %d to control vertices\n", (int)pickVertexID);
+                                staticMesh.ControlVertexIDs->push_back((int)pickVertexID);
                                 (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 1;
                                 newColor = kHandleVertexColor;
                             }
                             else
                             {
-                                printf("Removing %d from constrained vertices\n", (int)pickVertexID);
-                                staticMesh.HandleVertexIDs->erase(found);
+                                printf("Removing %d from control vertices\n", (int)pickVertexID);
+                                staticMesh.ControlVertexIDs->erase(found);
                                 (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 0;
                                 newColor = kUnselectedVertexColor;
                             }
@@ -1248,7 +1251,7 @@ bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         else
                         {
                             // new vertex to drag for modeling
-                            if (found != end(*staticMesh.HandleVertexIDs))
+                            if (found != end(*staticMesh.ControlVertexIDs))
                                 g_Scene.DragVertexID = (int)pickVertexID;
                         }
                     }
@@ -1298,9 +1301,25 @@ static void SceneShowToolboxGUI()
 
             if (ImGui::Button("Reset Constraints"))
             {
-                staticMesh.HandleVertexIDs->clear();
+                staticMesh.ControlVertexIDs->clear();
                 staticMesh.VertexConstraintStatuses->clear();
                 staticMesh.VertexConstraintStatuses->resize(staticMesh.CPUPositions->size(), 0);
+                // Reset colors
+                {
+                    ID3D11DeviceContext* dc = RendererGetDeviceContext();
+
+                    D3D11_MAPPED_SUBRESOURCE mappedColors;
+                    CHECKHR(dc->Map(staticMesh.pSelectorColorVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedColors));
+
+                    VertexSelectorColor* colors = (VertexSelectorColor*)mappedColors.pData;
+
+                    for (int vertexID = 0; vertexID < (int)staticMesh.CPUPositions->size(); vertexID++)
+                    {
+                        colors[vertexID] = VertexSelectorColor{ kUnselectedVertexColor };
+                    }
+
+                    dc->Unmap(staticMesh.pSelectorColorVertexBuffer.Get(), 0);
+                }
                 staticMesh.SystemMatrixNeedsRebuild = true;
             }
 
@@ -1453,10 +1472,10 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
             XMVECTOR movement = newUnprojected - oldUnprojected;
 
-            // set positions of handle vertices
-            for (int c = 0; c < (int)staticMesh.HandleVertexIDs->size(); c++)
+            // set positions of control vertices
+            for (int c = 0; c < (int)staticMesh.ControlVertexIDs->size(); c++)
             {
-                int i = (*staticMesh.HandleVertexIDs)[c];
+                int i = (*staticMesh.ControlVertexIDs)[c];
                 XMStoreFloat3(&cpuPosBuf[i], XMLoadFloat3(&cpuPosBuf[i]) + movement);
             }
 
