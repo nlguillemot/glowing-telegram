@@ -100,7 +100,7 @@ void GSmain(triangle VSOut input[3], inout TriangleStream<GSOut> output)
 
 static const float kWireframeThickness = 0.001;
 
-PSOut PSmain(GSOut gs)
+PSOut PSmain(GSOut gs, bool isFrontFace : SV_IsFrontFace)
 {
     PSOut output;
 
@@ -119,6 +119,8 @@ PSOut PSmain(GSOut gs)
         specularMap = 0.0;
 
     float3 N = normalize(input.WorldNormal);
+    if (!isFrontFace)
+        N = -N;
     float3 P = input.WorldPosition;
     float3 C = Camera.WorldPosition.xyz;
 

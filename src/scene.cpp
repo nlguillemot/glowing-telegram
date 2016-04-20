@@ -32,6 +32,15 @@ struct VertexPosition
     XMFLOAT3 Position;
 };
 
+struct VertexSelectorColor
+{
+    XMFLOAT4 Color;
+};
+
+static const XMFLOAT4 kUnselectedVertexColor = { 0.9f, 0.9f, 0.9f, 1.0f };
+static const XMFLOAT4 kFixedVertexColor = { 0.8f, 0.1f, 0.1f, 1.0f };
+static const XMFLOAT4 kHandleVertexColor = { 0.6f, 0.6f, 0.0f, 1.0f };
+
 struct VertexTexCoord
 {
     XMFLOAT2 TexCoord;
@@ -76,6 +85,7 @@ struct StaticMesh
 {
     std::string Name;
     ComPtr<ID3D11Buffer> pPositionVertexBuffer;
+    ComPtr<ID3D11Buffer> pSelectorColorVertexBuffer;
     ComPtr<ID3D11Buffer> pTexCoordVertexBuffer;
     ComPtr<ID3D11Buffer> pNormalVertexBuffer;
     ComPtr<ID3D11Buffer> pTangentVertexBuffer;
@@ -347,6 +357,7 @@ static void SceneAddObjMesh(
         }
 
         ComPtr<ID3D11Buffer> pPositionBuffer;
+        ComPtr<ID3D11Buffer> pSelectorColorBuffer;
         ComPtr<ID3D11Buffer> pTexCoordBuffer;
         ComPtr<ID3D11Buffer> pNormalBuffer;
         ComPtr<ID3D11Buffer> pTangentBuffer;
@@ -380,6 +391,18 @@ static void SceneAddObjMesh(
             memcpy(cpuPositions->data(), mesh.positions.data(), numVertices * sizeof(XMFLOAT3));
             bindPoseCPUPositions->resize(numVertices);
             memcpy(bindPoseCPUPositions->data(), mesh.positions.data(), numVertices * sizeof(XMFLOAT3));
+        }
+
+        {
+            std::vector<XMFLOAT4> selectorColorInitialData(numVertices, kUnselectedVertexColor);
+
+            D3D11_SUBRESOURCE_DATA selectorColorVertexBufferData = {};
+            selectorColorVertexBufferData.pSysMem = selectorColorInitialData.data();
+
+            CHECKHR(dev->CreateBuffer(
+                &CD3D11_BUFFER_DESC(sizeof(VertexSelectorColor) * numVertices, D3D11_BIND_VERTEX_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE),
+                &selectorColorVertexBufferData,
+                &pSelectorColorBuffer));
         }
 
         if (!mesh.texcoords.empty())
@@ -592,6 +615,7 @@ static void SceneAddObjMesh(
             if (sm.Name.empty() && defaultName)
                 sm.Name = defaultName;
             sm.pPositionVertexBuffer = pPositionBuffer;
+            sm.pSelectorColorVertexBuffer = pSelectorColorBuffer;
             sm.pTexCoordVertexBuffer = pTexCoordBuffer;
             sm.pNormalVertexBuffer = pNormalBuffer;
             sm.pTangentVertexBuffer = pTangentBuffer;
@@ -833,6 +857,7 @@ void SceneInit()
     {
         D3D11_INPUT_ELEMENT_DESC selectorInputElementDescs[] = {
             { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 }
         };
 
         CHECKHR(dev->CreateInputLayout(
@@ -859,7 +884,10 @@ void SceneInit()
         D3D11_SUBRESOURCE_DATA initialSelect = {};
         initialSelect.pSysMem = &selection;
         initialSelect.SysMemPitch = initialSelect.SysMemSlicePitch = sizeof(CurrSelectionData);
-        CHECKHR(dev->CreateBuffer(&CD3D11_BUFFER_DESC(sizeof(CurrSelectionData), D3D11_BIND_CONSTANT_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE), &initialSelect, &g_Scene.pCurrSelectedVertexID));
+        CHECKHR(dev->CreateBuffer(
+            &CD3D11_BUFFER_DESC(sizeof(CurrSelectionData), D3D11_BIND_CONSTANT_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE), 
+            &initialSelect, 
+            &g_Scene.pCurrSelectedVertexID));
     }
 
     g_Scene.LastMouseX = INT_MIN;
@@ -1385,8 +1413,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
         CurrSelectionData selection = {};
         selection.VertexID.x = selection.VertexID.y = selection.VertexID.z = selection.VertexID.w = g_Scene.DragVertexID == UINT_MAX ? PickSelector(currMouseX, currMouseY) : g_Scene.DragVertexID;
-        selection.Captured.x = selection.Captured.y = selection.Captured.z = selection.Captured.w = g_Scene.DragVertexID != UINT_MAX;
-        
+
         CurrSelectionData* pSelection = (CurrSelectionData*)mapped.pData;
         *pSelection = selection;
 
@@ -1422,8 +1449,7 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
         ID3D11Buffer* currSelectedCBV = g_Scene.pCurrSelectedVertexID.Get();
         dc->GSSetConstantBuffers(SELECTOR_CURRSELECTION_BUFFER_SLOT, 1, &currSelectedCBV);
-        dc->PSSetConstantBuffers(SELECTOR_CURRSELECTION_BUFFER_SLOT, 1, &currSelectedCBV);
-            
+
         // SceneNode CBV
         {
             D3D11_MAPPED_SUBRESOURCE mapped;
@@ -1443,9 +1469,9 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
             dc->GSSetConstantBuffers(SELECTOR_SCENENODE_BUFFER_SLOT, 1, &sceneNodeCBV);
         }
 
-        ID3D11Buffer* selectorBuffers[] = { staticMesh.pPositionVertexBuffer.Get() };
-        UINT selectorStrides[] = { sizeof(VertexPosition) };
-        UINT selectorOffsets[] = { 0 };
+        ID3D11Buffer* selectorBuffers[] = { staticMesh.pPositionVertexBuffer.Get(), staticMesh.pSelectorColorVertexBuffer.Get() };
+        UINT selectorStrides[] = { sizeof(VertexPosition), sizeof(VertexSelectorColor) };
+        UINT selectorOffsets[] = { 0, 0 };
         dc->IASetVertexBuffers(0, _countof(selectorBuffers), selectorBuffers, selectorStrides, selectorOffsets);
         dc->IASetIndexBuffer(staticMesh.pIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
         dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);

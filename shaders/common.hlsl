@@ -37,7 +37,6 @@ struct PerSceneNodeData
 struct CurrSelectionData
 {
     uint4 VertexID;
-    uint4 Captured;
 };
 
 #define SCENE_CAMERA_BUFFER_SLOT 0

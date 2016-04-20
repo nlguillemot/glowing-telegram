@@ -3,18 +3,21 @@
 struct VSIn
 {
     float4 Position : POSITION;
+    float4 Color : COLOR;
     uint VertexID : SV_VertexID;
 };
 
 struct VSOut
 {
     float4 Position : POSITION;
+    float4 Color : COLOR;
     uint VertexID : VERTEXID;
 };
 
 struct GSOut
 {
     float4 Position : SV_Position;
+    float4 Color : COLOR;
     float2 TexCoord : TEXCOORD;
     nointerpolation float3 WorldCenter : WORLDCENTER;
     nointerpolation uint VertexID : VERTEXID;
@@ -47,6 +50,7 @@ VSOut VSmain(VSIn input)
 {
     VSOut output;
     output.Position = input.Position;
+    output.Color = input.Color;
     output.VertexID = input.VertexID;
     return output;
 }
@@ -69,6 +73,7 @@ void GSmain(point VSOut input[1], inout TriangleStream<GSOut> output)
 
     GSOut o;
 
+    o.Color = input[0].Color;
     o.WorldCenter = worldPosition;
     o.VertexID = input[0].VertexID;
 
@@ -125,17 +130,8 @@ PSOut PSmain(GSOut input)
 
     output.Normal = N;
     output.Depth = clipPos.z / clipPos.w;
-    output.Color = float4((G + S).xxx * float3(0.6,1.0,0.6), 1.0);
-    if (CurrSelection.VertexID.x == input.VertexID)
-    {
-        output.Color.b = 0.0;
-        if (CurrSelection.Captured.x != 0)
-        {
-            output.Color.g = 0.0;
-        }
-    }
-    output.Color.rgb *= c;
-    output.Color.rgb *= output.Color.a;
+    output.Color = float4((G + S).xxx * input.Color.rgb, input.Color.a);
+    output.Color.rgb *= output.Color.a; // premultiplied alpha
     output.VertexID = input.VertexID;
     return output;
 }

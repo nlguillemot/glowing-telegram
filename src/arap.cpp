@@ -17,7 +17,7 @@
 // CLAPACK imports, if Intel MKL is not available.
 #ifndef INTEL_MKL_VERSION
 extern "C" int spptrf_(char* uplo, int* n, float* ap, int* info);
-extern "C" int spptrs_(char *uplo, int* n, int* nrhs, float* ap, float* b, int* ldb, int* info);
+extern "C" int spptrs_(char* uplo, int* n, int* nrhs, float* ap, float* b, int* ldb, int* info);
 #endif
 
 // --Incredibly-- over-engineered SVD implementation.
@@ -27,7 +27,7 @@ extern "C" int spptrs_(char *uplo, int* n, int* nrhs, float* ap, float* b, int* 
 #define COMPUTE_U_AS_MATRIX
 #include "Singular_Value_Decomposition_Preamble.hpp"
 
-// outputs a tga image to visualize the matrix. useful for debugging.
+// outputs a tga image to visualize the (packed) matrix. useful for debugging.
 static void matrix_to_image(const char* filename, int nv, const float* F)
 {
 #ifdef _MSC_VER
