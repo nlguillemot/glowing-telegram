@@ -1005,19 +1005,37 @@ bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
                     if (AppIsKeyPressed('C')) // toggle control vertices
                     {
+                        ID3D11Device* dev = RendererGetDevice();
+                        ID3D11DeviceContext* dc = RendererGetDeviceContext();
+
+                        XMFLOAT4 newColor;
+
                         // toggle constrained status
                         if (found == end(*staticMesh.ConstrainedVertexIDs))
                         {
                             printf("Adding %d to constrained vertices\n", (int)pickVertexID);
                             staticMesh.ConstrainedVertexIDs->push_back((int)pickVertexID);
                             (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 1;
+                            newColor = kHandleVertexColor;
                         }
                         else
                         {
                             printf("Removing %d from constrained vertices\n", (int)pickVertexID);
                             staticMesh.ConstrainedVertexIDs->erase(found);
                             (*staticMesh.VertexConstraintStatuses)[pickVertexID] = 0;
+                            newColor = kUnselectedVertexColor;
                         }
+
+                        D3D11_SUBRESOURCE_DATA newColorData = {};
+                        newColorData.pSysMem = &newColor;
+
+                        ComPtr<ID3D11Buffer> pNewColorBuffer;
+                        CHECKHR(dev->CreateBuffer(
+                            &CD3D11_BUFFER_DESC(sizeof(VertexSelectorColor), 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_WRITE),
+                            &newColorData,
+                            &pNewColorBuffer));
+
+                        dc->CopySubresourceRegion(staticMesh.pSelectorColorVertexBuffer.Get(), 0, sizeof(VertexSelectorColor) * pickVertexID, 0, 0, pNewColorBuffer.Get(), 0, NULL);
 
                         staticMesh.SystemMatrixNeedsRebuild = true;
                     }
