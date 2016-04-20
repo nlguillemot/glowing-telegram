@@ -5,6 +5,9 @@
 #include <string.h>
 #include <math.h>
 
+// For debugging
+#include <stdio.h>
+
 // yanked in from the disgusting SVD headers
 #include <algorithm>
 
@@ -34,6 +37,68 @@ struct arap_system
     // factorized system matrix, compresessed dense lower triangular storage.
     float* F;
 };
+
+// outputs a tga image to visualize the (packed) matrix. useful for debugging.
+static void matrix_to_image(const char* filename, int nv, const float* F)
+{
+#ifdef _MSC_VER
+    FILE* f = NULL;
+    fopen_s(&f, filename, "wb");
+#else
+    FILE* f = fopen(filename, "wb");
+#endif
+    if (f)
+    {
+        int width = nv & 0xFFFF;
+        int height = nv & 0xFFFF;
+
+        // max image size = 2^16
+        assert(width == nv);
+        assert(height == nv);
+
+        fputc(0, f);
+        fputc(0, f);
+        fputc(2, f); // uncompressed RGB
+        fputc(0, f); fputc(0, f);
+        fputc(0, f); fputc(0, f);
+        fputc(0, f);
+        fputc(0, f); fputc(0, f); // x origin
+        fputc(0, f); fputc(0, f); // y origin
+        fputc((width & 0x00FF), f);
+        fputc((width & 0xFF00) / 256, f);
+        fputc((height & 0x00FF), f);
+        fputc((height & 0xFF00) / 256, f);
+        fputc(32, f); // 32 bit bitmap
+        fputc(1 << 5, f); // origin top left
+        unsigned char* img = (unsigned char*)malloc(width * height * 4);
+        for (int i = 0; i < height; i++)
+        {
+            for (int j = 0; j < width; j++)
+            {
+                int vi = i;
+                int vj = j;
+
+                // enforce j <= i < n
+                if (vi < vj)
+                {
+                    int tmp = vi;
+                    vi = vj;
+                    vj = tmp;
+                }
+
+                int lin = vi + vj * (2 * nv - vj - 1) / 2;
+                int c = int(roundf(F[lin])) + (1 << 23);
+                img[(i * width + j) * 4 + 0] = (c & 0xFF0000) >> 16; // B
+                img[(i * width + j) * 4 + 1] = (c & 0xFF00) >> 8; // G
+                img[(i * width + j) * 4 + 2] = (c & 0xFF); // R
+                img[(i * width + j) * 4 + 3] = 255; // A
+            }
+        }
+        fwrite(img, width * height * 4, 1, f);
+        free(img);
+        fclose(f);
+    }
+}
 
 arap_system* create_arap_system_matrix(
     int nv,
@@ -127,6 +192,10 @@ arap_system* create_arap_system_matrix(
             curr_hID = h_vfnpIDs[4 * (curr_hID ^ 1) + 2];
         } while (curr_hID != v_hIDs[vi]);
     }
+
+
+    // Output image of matrix (for debugging)
+    matrix_to_image("arap_factorize_system_1.tga", sys->nfree, sys->F);
     
     // cholesky factorize
     {
@@ -137,6 +206,9 @@ arap_system* create_arap_system_matrix(
         spptrf_(&uplo, &n, ap, &info);
         assert(info == 0);
     }
+
+    // Output image of matrix (for debugging)
+    matrix_to_image("arap_factorize_system_2.tga", sys->nfree, sys->F);
 
     return sys;
 }
