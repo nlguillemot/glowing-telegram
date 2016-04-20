@@ -506,6 +506,12 @@ static void SceneAddObjMesh(
 
             weight /= 2.0f;
 
+            if (weight < 0.0f)
+            {
+                // hack to deal with negative weights, caused by cotangent weights with alpha + beta > pi
+                weight = 0.0f;
+            }
+
             (*edgeWeights)[halfedgeID / 2] = weight;
         }
 
@@ -1509,56 +1515,66 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
         SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
         StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
 
-        if (!staticMesh.SystemMatrixNeedsRebuild)
+        if (staticMesh.SystemMatrixNeedsRebuild)
         {
-            XMFLOAT3* cpuPosBuf = staticMesh.CPUPositions->data();
-            XMFLOAT3 currPos = cpuPosBuf[g_Scene.DragVertexID];
-
-            XMVECTOR up = XMLoadFloat3(&cameraUp);
-            XMVECTOR forward = XMLoadFloat3(&g_Scene.CameraLook);
-            XMVECTOR across = XMVector3Normalize(XMVector3Cross(forward, up));
-            XMVECTOR upward = XMVector3Normalize(XMVector3Cross(across, forward));
-
-            XMMATRIX transform = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, sceneNode.Transform.Translation);
-
-            XMVECTOR clipPos = XMVector3Transform(XMLoadFloat3(&currPos), XMMatrixMultiply(XMMatrixMultiply(transform, g_Scene.SceneWorldView), g_Scene.SceneProjection));
-
-            XMVECTOR oldUnprojected = XMVector3Unproject(
-                XMVectorSet((float)g_Scene.LastMouseX, (float)g_Scene.LastMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
-                g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
-                g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
-
-            XMVECTOR newUnprojected = XMVector3Unproject(
-                XMVectorSet((float)currMouseX, (float)currMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
-                g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
-                g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
-
-            XMVECTOR movement = newUnprojected - oldUnprojected;
-
-            // set positions of control vertices
-            for (int c = 0; c < (int)staticMesh.ControlVertexIDs->size(); c++)
-            {
-                int i = (*staticMesh.ControlVertexIDs)[c];
-                XMStoreFloat3(&cpuPosBuf[i], XMLoadFloat3(&cpuPosBuf[i]) + movement);
-            }
-
-            D3D11_MAPPED_SUBRESOURCE mapped;
-            CHECKHR(dc->Map(staticMesh.pPositionVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-
-            // update the mesh as rigidly as possible based on the constrained vertices
-            arap(
-                (int)staticMesh.CPUPositions->size(), &staticMesh.BindPoseCPUPositions->data()->x, &staticMesh.CPUPositions->data()->x,
+            arap_factorize_system(
+                (int)staticMesh.CPUPositions->size(),
                 staticMesh.VertexConstraintStatuses->data(),
                 (const int*)staticMesh.Halfedge->Vertices.data(),
                 (const int*)staticMesh.Halfedge->Halfedges.data(),
                 staticMesh.EdgeWeights->data(),
-                staticMesh.ARAPSystemMatrix->data(),
-                DEFAULT_NUM_ARAP_ITERATIONS);
+                staticMesh.ARAPSystemMatrix->data());
 
-            memcpy(mapped.pData, cpuPosBuf, staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
-
-            dc->Unmap(staticMesh.pPositionVertexBuffer.Get(), 0);
+            staticMesh.SystemMatrixNeedsRebuild = false;
         }
+
+        XMFLOAT3* cpuPosBuf = staticMesh.CPUPositions->data();
+        XMFLOAT3 currPos = cpuPosBuf[g_Scene.DragVertexID];
+
+        XMVECTOR up = XMLoadFloat3(&cameraUp);
+        XMVECTOR forward = XMLoadFloat3(&g_Scene.CameraLook);
+        XMVECTOR across = XMVector3Normalize(XMVector3Cross(forward, up));
+        XMVECTOR upward = XMVector3Normalize(XMVector3Cross(across, forward));
+
+        XMMATRIX transform = XMMatrixAffineTransformation(sceneNode.Transform.Scaling, sceneNode.Transform.RotationOrigin, sceneNode.Transform.RotationQuaternion, sceneNode.Transform.Translation);
+
+        XMVECTOR clipPos = XMVector3Transform(XMLoadFloat3(&currPos), XMMatrixMultiply(XMMatrixMultiply(transform, g_Scene.SceneWorldView), g_Scene.SceneProjection));
+
+        XMVECTOR oldUnprojected = XMVector3Unproject(
+            XMVectorSet((float)g_Scene.LastMouseX, (float)g_Scene.LastMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
+            g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
+            g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
+
+        XMVECTOR newUnprojected = XMVector3Unproject(
+            XMVectorSet((float)currMouseX, (float)currMouseY, XMVectorGetZ(clipPos) / XMVectorGetW(clipPos), 1.0f),
+            g_Scene.SceneViewport.TopLeftX, g_Scene.SceneViewport.TopLeftY, g_Scene.SceneViewport.Width, g_Scene.SceneViewport.Height, g_Scene.SceneViewport.MinDepth, g_Scene.SceneViewport.MaxDepth,
+            g_Scene.SceneProjection, g_Scene.SceneWorldView, transform);
+
+        XMVECTOR movement = newUnprojected - oldUnprojected;
+
+        // set positions of control vertices
+        for (int c = 0; c < (int)staticMesh.ControlVertexIDs->size(); c++)
+        {
+            int i = (*staticMesh.ControlVertexIDs)[c];
+            XMStoreFloat3(&cpuPosBuf[i], XMLoadFloat3(&cpuPosBuf[i]) + movement);
+        }
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        CHECKHR(dc->Map(staticMesh.pPositionVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+
+        // update the mesh as rigidly as possible based on the constrained vertices
+        arap(
+            (int)staticMesh.CPUPositions->size(), &staticMesh.BindPoseCPUPositions->data()->x, &staticMesh.CPUPositions->data()->x,
+            staticMesh.VertexConstraintStatuses->data(),
+            (const int*)staticMesh.Halfedge->Vertices.data(),
+            (const int*)staticMesh.Halfedge->Halfedges.data(),
+            staticMesh.EdgeWeights->data(),
+            staticMesh.ARAPSystemMatrix->data(),
+            DEFAULT_NUM_ARAP_ITERATIONS);
+
+        memcpy(mapped.pData, cpuPosBuf, staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));
+
+        dc->Unmap(staticMesh.pPositionVertexBuffer.Get(), 0);
     }
 
     const float kClearColor[] = {
