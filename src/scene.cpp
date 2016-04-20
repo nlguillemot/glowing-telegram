@@ -1352,7 +1352,11 @@ static void SceneShowToolboxGUI()
     }
     ImGui::End();
 
-    if (ImGui::Begin("Tutorial", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+    int tutorialW = 600, tutorialH = 190;
+
+    ImGui::SetNextWindowSize(ImVec2((float)tutorialW, (float)tutorialH), ImGuiSetCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(0, (float)h - tutorialH), ImGuiSetCond_Always);
+    if (ImGui::Begin("Tutorial", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize))
     {
         if (g_Scene.ModelingSceneNodeID == -1)
         {
