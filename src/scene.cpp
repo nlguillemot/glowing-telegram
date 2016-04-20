@@ -1343,9 +1343,63 @@ static void SceneShowToolboxGUI()
                 const StaticMesh& sm = g_Scene.StaticMeshes[g_Scene.SceneNodes[i].AsStaticMesh.StaticMeshID];
                 modelNames.push_back(sm.Name.c_str());
             }
-            if (ImGui::ListBox("Model", &g_Scene.ModelingSceneNodeID, modelNames.data(), (int)modelNames.size()))
+            ImGui::Text("Model selection");
+            if (ImGui::ListBox("##modelselect", &g_Scene.ModelingSceneNodeID, modelNames.data(), (int)modelNames.size()))
             {
                 g_Scene.DragVertexID = -1;
+            }
+        }
+    }
+    ImGui::End();
+
+    if (ImGui::Begin("Tutorial", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        if (g_Scene.ModelingSceneNodeID == -1)
+        {
+            ImGui::Text("A model needs to be loaded");
+        }
+        else
+        {
+            SceneNode& sceneNode = g_Scene.SceneNodes[g_Scene.ModelingSceneNodeID];
+            StaticMesh& staticMesh = g_Scene.StaticMeshes[sceneNode.AsStaticMesh.StaticMeshID];
+
+            bool anyConstrained = std::any_of(begin(*staticMesh.VertexConstraintStatuses), end(*staticMesh.VertexConstraintStatuses), [](int s) { return s; });
+
+            if (g_Scene.ROISelectionActive)
+            {
+                ImGui::Text("Left click to create polygon selection vertices.");
+                ImGui::Text("Press spacebar when done.");
+            }
+            else if (anyConstrained && !staticMesh.ControlVertexIDs->empty() && staticMesh.SystemMatrixNeedsRebuild)
+            {
+                ImGui::Text("Constraints have changed, the ARAP system matrix needs to be rebuilt.");
+                ImGui::Text("Click \"Refactorize ARAP\" in the Toolbox before dragging handles.");
+            }
+            else if (staticMesh.ControlVertexIDs->empty())
+            {
+                if (anyConstrained)
+                {
+                    ImGui::Text("Select some handle points by left-clicking while holding the \"C\" key.");
+                }
+                else
+                {
+                    ImGui::Text("Click \"Select Region of Interest\" to define which points to deform");
+                }
+            }
+            else
+            {
+                ImGui::Text("Left click drag handle points to deform the mesh");
+            }
+
+            ImGui::Text("-----");
+            ImGui::Text("Camera controls:");
+            ImGui::Text("Hold right click - Activate camera");
+            if (AppIsKeyPressed(VK_RBUTTON))
+            {
+                ImGui::Text("Mouse movement - Look around");
+                ImGui::Text("WASD - Forward/Left/Backward/Right");
+                ImGui::Text("Spacebar - Go up");
+                ImGui::Text("Left Ctrl - Go down");
             }
         }
     }
