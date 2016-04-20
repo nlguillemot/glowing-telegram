@@ -120,7 +120,6 @@
     <ClInclude Include="..\src\imgui_impl_dx11.h" />
     <ClInclude Include="..\src\imgui_internal.h" />
     <ClInclude Include="..\src\halfedge.h" />
-    <ClInclude Include="..\src\mkl.h" />
     <ClInclude Include="..\src\renderer.h" />
     <ClInclude Include="..\src\scene.h" />
     <ClInclude Include="..\src\Singular_Value_Decomposition_Givens_QR_Factorization_Kernel.hpp" />
@@ -149,11 +148,6 @@
     <None Include="..\shaders\selector.hlsl">
       <FileType>Document</FileType>
     </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Library Include="..\src\blas.lib" />
-    <Library Include="..\src\clapack.lib" />
-    <Library Include="..\src\libf2c.lib" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\shaders\roi.hlsl">

@@ -35,7 +35,6 @@
     <ClInclude Include="..\src\tiny_obj_loader.h" />
     <ClInclude Include="..\src\arap.h" />
     <ClInclude Include="..\src\halfedge.h" />
-    <ClInclude Include="..\src\mkl.h" />
     <ClInclude Include="..\src\Singular_Value_Decomposition_Jacobi_Conjugation_Kernel.hpp" />
     <ClInclude Include="..\src\Singular_Value_Decomposition_Kernel_Declarations.hpp" />
     <ClInclude Include="..\src\Singular_Value_Decomposition_Main_Kernel_Body.hpp" />
@@ -60,11 +59,6 @@
     <None Include="..\shaders\selector.hlsl">
       <Filter>shaders</Filter>
     </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Library Include="..\src\libf2c.lib" />
-    <Library Include="..\src\blas.lib" />
-    <Library Include="..\src\clapack.lib" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="..\shaders\roi.hlsl">

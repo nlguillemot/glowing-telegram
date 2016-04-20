@@ -99,7 +99,7 @@ struct StaticMesh
     std::shared_ptr<std::vector<XMFLOAT3>> CPUPositions;
     std::shared_ptr<HalfedgeMesh> Halfedge;
     std::shared_ptr<std::vector<float>> EdgeWeights;
-    std::shared_ptr<std::vector<float>> ARAPSystemMatrix;
+    std::shared_ptr<arap_system> ARAPSystemMatrix;
     std::shared_ptr<std::vector<int>> ControlVertexIDs;
     std::shared_ptr<std::vector<int>> VertexConstraintStatuses;
     bool SystemMatrixNeedsRebuild;
@@ -385,7 +385,6 @@ static void SceneAddObjMesh(
         std::shared_ptr<std::vector<XMFLOAT3>> bindPoseCPUPositions = std::make_shared<std::vector<XMFLOAT3>>();
         std::shared_ptr<HalfedgeMesh> halfedge = std::make_shared<HalfedgeMesh>();
         std::shared_ptr<std::vector<float>> edgeWeights = std::make_shared<std::vector<float>>();
-        std::shared_ptr<std::vector<float>> arapSystemMatrix = std::make_shared<std::vector<float>>();
         std::shared_ptr<std::vector<int>> controlVertexIDs = std::make_shared<std::vector<int>>();
         std::shared_ptr<std::vector<int>> constraintedVertexStatuses = std::make_shared<std::vector<int>>();
 
@@ -514,8 +513,6 @@ static void SceneAddObjMesh(
 
             (*edgeWeights)[halfedgeID / 2] = weight;
         }
-
-        arapSystemMatrix->resize(ARAP_PACKED_SYSTEM_SIZE_IN_FLOATS(numVertices));
 
         // Generate tangents if possible.
         // Note: The handedness of the local coordinate system is stored as +/-1 in the w-coordinate
@@ -651,7 +648,6 @@ static void SceneAddObjMesh(
             sm.BindPoseCPUPositions = bindPoseCPUPositions;
             sm.Halfedge = halfedge;
             sm.EdgeWeights = edgeWeights;
-            sm.ARAPSystemMatrix = arapSystemMatrix;
             sm.ControlVertexIDs = controlVertexIDs;
             sm.VertexConstraintStatuses = constraintedVertexStatuses;
             sm.SystemMatrixNeedsRebuild = true;
@@ -1051,6 +1047,12 @@ static UINT32 PickSelector(int x, int y)
 
 bool SceneHandleEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    if (msg == WM_KEYDOWN && wParam == 'R')
+    {
+        g_Scene.ROISelectionActive = true;
+        g_Scene.ROISelectionPoints.clear();
+    }
+
     if (msg == WM_KEYDOWN && wParam == VK_SPACE)
     {
         if (g_Scene.ROISelectionActive)
@@ -1299,13 +1301,14 @@ static void SceneShowToolboxGUI()
 
             if (ImGui::Button("Refactorize ARAP"))
             {
-                arap_factorize_system(
+                staticMesh.ARAPSystemMatrix.reset(
+                    create_arap_system_matrix(
                     (int)staticMesh.CPUPositions->size(),
-                    staticMesh.VertexConstraintStatuses->data(),
-                    (const int*)staticMesh.Halfedge->Vertices.data(),
-                    (const int*)staticMesh.Halfedge->Halfedges.data(),
-                    staticMesh.EdgeWeights->data(),
-                    staticMesh.ARAPSystemMatrix->data());
+                        staticMesh.VertexConstraintStatuses->data(),
+                        (const int*)staticMesh.Halfedge->Vertices.data(),
+                        (const int*)staticMesh.Halfedge->Halfedges.data(),
+                        staticMesh.EdgeWeights->data()),
+                    destroy_arap_system_matrix);
 
                 staticMesh.SystemMatrixNeedsRebuild = false;
             }
@@ -1363,7 +1366,7 @@ static void SceneShowToolboxGUI()
     }
     ImGui::End();
 
-    int tutorialW = 600, tutorialH = 190;
+    int tutorialW = 600, tutorialH = 200;
 
     ImGui::SetNextWindowSize(ImVec2((float)tutorialW, (float)tutorialH), ImGuiSetCond_Always);
     ImGui::SetNextWindowPos(ImVec2(0, (float)h - tutorialH), ImGuiSetCond_Always);
@@ -1389,6 +1392,7 @@ static void SceneShowToolboxGUI()
             {
                 ImGui::Text("Constraints have changed, the ARAP system matrix needs to be rebuilt.");
                 ImGui::Text("Click \"Refactorize ARAP\" in the Toolbox before dragging handles.");
+                ImGui::Text("... Or just drag anyways. It might stutter, that's all.");
             }
             else if (staticMesh.ControlVertexIDs->empty())
             {
@@ -1398,7 +1402,7 @@ static void SceneShowToolboxGUI()
                 }
                 else
                 {
-                    ImGui::Text("Click \"Select Region of Interest\" to define which points to deform");
+                    ImGui::Text("Click \"Select Region of Interest\" to define which points to deform, or press \"R\"");
                 }
             }
             else
@@ -1517,13 +1521,14 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
         if (staticMesh.SystemMatrixNeedsRebuild)
         {
-            arap_factorize_system(
+            staticMesh.ARAPSystemMatrix.reset(
+                create_arap_system_matrix(
                 (int)staticMesh.CPUPositions->size(),
-                staticMesh.VertexConstraintStatuses->data(),
-                (const int*)staticMesh.Halfedge->Vertices.data(),
-                (const int*)staticMesh.Halfedge->Halfedges.data(),
-                staticMesh.EdgeWeights->data(),
-                staticMesh.ARAPSystemMatrix->data());
+                    staticMesh.VertexConstraintStatuses->data(),
+                    (const int*)staticMesh.Halfedge->Vertices.data(),
+                    (const int*)staticMesh.Halfedge->Halfedges.data(),
+                    staticMesh.EdgeWeights->data()),
+                destroy_arap_system_matrix);
 
             staticMesh.SystemMatrixNeedsRebuild = false;
         }
@@ -1564,12 +1569,11 @@ void ScenePaint(ID3D11RenderTargetView* pBackBufferRTV)
 
         // update the mesh as rigidly as possible based on the constrained vertices
         arap(
-            (int)staticMesh.CPUPositions->size(), &staticMesh.BindPoseCPUPositions->data()->x, &staticMesh.CPUPositions->data()->x,
-            staticMesh.VertexConstraintStatuses->data(),
+            staticMesh.ARAPSystemMatrix.get(),
+            &staticMesh.BindPoseCPUPositions->data()->x, &staticMesh.CPUPositions->data()->x,
             (const int*)staticMesh.Halfedge->Vertices.data(),
             (const int*)staticMesh.Halfedge->Halfedges.data(),
             staticMesh.EdgeWeights->data(),
-            staticMesh.ARAPSystemMatrix->data(),
             DEFAULT_NUM_ARAP_ITERATIONS);
 
         memcpy(mapped.pData, cpuPosBuf, staticMesh.CPUPositions->size() * sizeof(XMFLOAT3));

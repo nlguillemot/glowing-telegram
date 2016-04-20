@@ -8,17 +8,8 @@
 // yanked in from the disgusting SVD headers
 #include <algorithm>
 
-// Used for debugging
-#include <stdio.h>
-
-// grabs the Intel one if available, otherwise grabs the stub included with this project
+// Intel Math Kernel Library
 #include <mkl.h>
-
-// CLAPACK imports, if Intel MKL is not available.
-#ifndef INTEL_MKL_VERSION
-extern "C" int spptrf_(char* uplo, int* n, float* ap, int* info);
-extern "C" int spptrs_(char* uplo, int* n, int* nrhs, float* ap, float* b, int* ldb, int* info);
-#endif
 
 // --Incredibly-- over-engineered SVD implementation.
 // Why is there no simple working svd3 library? This is ridiculous.
@@ -27,112 +18,80 @@ extern "C" int spptrs_(char* uplo, int* n, int* nrhs, float* ap, float* b, int* 
 #define COMPUTE_U_AS_MATRIX
 #include "Singular_Value_Decomposition_Preamble.hpp"
 
-// outputs a tga image to visualize the (packed) matrix. useful for debugging.
-static void matrix_to_image(const char* filename, int nv, const float* F)
+struct arap_system
 {
-#ifdef _MSC_VER
-    FILE* f = NULL;
-    fopen_s(&f, filename, "wb");
-#else
-    FILE* f = fopen(filename, "wb");
-#endif
-    if (f)
-    {
-        int width = nv & 0xFFFF;
-        int height = nv & 0xFFFF;
+    int nv;
+    int nfree;
 
-        // max image size = 2^16
-        assert(width == nv);
-        assert(height == nv);
+    // mapping between vertex IDs and rows of the system matrix ("free" aka unconstrained vertices)
+    int* free_to_vid;
+    int* vid_to_free;
 
-        fputc(0, f);
-        fputc(0, f);
-        fputc(2, f); // uncompressed RGB
-        fputc(0, f); fputc(0, f);
-        fputc(0, f); fputc(0, f);
-        fputc(0, f);
-        fputc(0, f); fputc(0, f); // x origin
-        fputc(0, f); fputc(0, f); // y origin
-        fputc((width & 0x00FF), f);
-        fputc((width & 0xFF00) / 256, f);
-        fputc((height & 0x00FF), f);
-        fputc((height & 0xFF00) / 256, f);
-        fputc(32, f); // 32 bit bitmap
-        fputc(1 << 5, f); // origin top left
-        unsigned char* img = (unsigned char*)malloc(width * height * 4);
-        for (int i = 0; i < height; i++)
-        {
-            for (int j = 0; j < width; j++)
-            {
-                int vi = i;
-                int vj = j;
+    // storage for solver
+    float* Ris;
+    float* b;
 
-                // enforce j <= i < n
-                if (vi < vj)
-                {
-                    int tmp = vi;
-                    vi = vj;
-                    vj = tmp;
-                }
+    // factorized system matrix, compresessed dense lower triangular storage.
+    float* F;
+};
 
-                int lin = vi + vj * (2 * nv - vj - 1) / 2;
-                int c = int(roundf(F[lin])) + (1 << 23);
-                img[(i * width + j) * 4 + 0] = (c & 0xFF0000) >> 16; // B
-                img[(i * width + j) * 4 + 1] = (c & 0xFF00) >> 8; // G
-                img[(i * width + j) * 4 + 2] = (c & 0xFF); // R
-                img[(i * width + j) * 4 + 3] = 255; // A
-            }
-        }
-        fwrite(img, width * height * 4, 1, f);
-        free(img);
-        fclose(f);
-    }
-}
-
-void arap_factorize_system(
+arap_system* create_arap_system_matrix(
     int nv,
     const int* vcs,
     const int* v_hIDs,
     const int* h_vfnpIDs,
-    const float* e_ws,
-    float* F)
+    const float* e_ws)
 {
+    arap_system* sys = (arap_system*)malloc(sizeof(arap_system));
+    sys->nv = nv;
+
     // count the number of free vertices
-    int nfree = 0;
-    for (int i = 0; i < nv; i++)
+    sys->nfree = 0;
+    for (int i = 0; i < sys->nv; i++)
     {
         if (!vcs[i])
-            nfree++;
+            sys->nfree++;
     }
 
     // list of free vertices (free vertex index -> vertexID)
-    int* free_to_vid = (int*)malloc(sizeof(int) * nfree);
+    sys->free_to_vid = (int*)malloc(sizeof(int) * sys->nfree);
+    
     // reverse mapping (vertexID -> free vertex index)
-    int* vid_to_free = (int*)malloc(sizeof(int) * nv);
-    for (int i = 0, curr_free = 0; i < nv; i++)
+    sys->vid_to_free = (int*)malloc(sizeof(int) * sys->nv);
+
+    for (int i = 0, curr_free = 0; i < sys->nv; i++)
     {
         if (vcs[i])
         {
-            vid_to_free[i] = -1;
+            sys->vid_to_free[i] = -1;
             continue;
         }
 
-        free_to_vid[curr_free] = i;
-        vid_to_free[i] = curr_free;
+        sys->free_to_vid[curr_free] = i;
+        sys->vid_to_free[i] = curr_free;
         curr_free++;
     }
 
+    // rotation matrices computed at each iteration
+    sys->Ris = (float*)malloc(sizeof(float) * 9 * sys->nv);
+
+    // storage for solver
+    sys->b = (float*)malloc(sizeof(float) * 3 * sys->nfree);
+
     // number of weights in the system
-    int nw = nfree * (nfree + 1) / 2;
+    int nw = sys->nfree * (sys->nfree + 1) / 2;
+
+    // matrix for weights that will be factorized
+    sys->F = (float*)malloc(nw * sizeof(float));
 
     // initialize packed weight matrix
-    memset(F, 0, nw * sizeof(float));
+    memset(sys->F, 0, nw * sizeof(float));
 
     // initialize the rows for every free vertex in the laplacian
-    for (int free_i = 0; free_i < nfree; free_i++)
+    for (int free_i = 0; free_i < sys->nfree; free_i++)
     {
         // the VertexID of this free vertex
-        int vi = free_to_vid[free_i];
+        int vi = sys->free_to_vid[free_i];
 
         // go over every neighbor and add in their weights
         int curr_hID = v_hIDs[vi];
@@ -149,53 +108,64 @@ void arap_factorize_system(
             {
                 // compute linear index for packed matrix
                 int row = free_i;
-                int col = vid_to_free[vj];
+                int col = sys->vid_to_free[vj];
              
                 // only set values in the row of this vertex, since this is building the matrix row-by-row.
                 if (col < row)
                 {
                     // set the weight between these two vertices.
                     // it's negative because rows of a laplacian matrix add to 0 (the diagonal is positive)
-                    int lin = row + col * (2 * nfree - col - 1) / 2;
-                    F[lin] = -wij;
+                    int lin = row + col * (2 * sys->nfree - col - 1) / 2;
+                    sys->F[lin] = -wij;
                 }
             }
 
             // add weight to diagonal
-            int diag = free_i + free_i * (2 * nfree - free_i - 1) / 2;
-            F[diag] += wij;
+            int diag = free_i + free_i * (2 * sys->nfree - free_i - 1) / 2;
+            sys->F[diag] += wij;
 
             curr_hID = h_vfnpIDs[4 * (curr_hID ^ 1) + 2];
         } while (curr_hID != v_hIDs[vi]);
     }
     
-    // Output image of matrix (for debugging)
-    // matrix_to_image("arap_factorize_system_1.tga", nfree, F);
-
     // cholesky factorize
-    char uplo = 'L';
-    int n = nfree;
-    float* ap = F;
-    int info;
-    spptrf_(&uplo, &n, ap, &info);
-    assert(info == 0);
+    {
+        char uplo = 'L';
+        int n = sys->nfree;
+        float* ap = sys->F;
+        int info;
+        spptrf_(&uplo, &n, ap, &info);
+        assert(info == 0);
+    }
 
-    // Output image of matrix (for debugging)
-    // matrix_to_image("arap_factorize_system_2.tga", nfree, F);
+    return sys;
+}
 
-    free(vid_to_free);
-    free(free_to_vid);
+void destroy_arap_system_matrix(arap_system* sys)
+{
+    if (sys)
+    {
+        free(sys->free_to_vid);
+        free(sys->vid_to_free);
+        
+        free(sys->Ris);
+        free(sys->b);
+
+        free(sys->F);
+        
+        free(sys);
+    }
 }
 
 static void update_rotations(
-    int nv, const float* p_bind_XYZs, const float* p_guess_XYZs,
+    arap_system* sys,
+    const float* p_bind_XYZs, const float* p_guess_XYZs,
     const int* v_hIDs,
     const int* h_vfnpIDs,
-    const float* e_ws,
-    float* Ris)
+    const float* e_ws)
 {
     // Compute new rigid rotation for every vertex
-    for (int vi = 0; vi < nv; vi++)
+    for (int vi = 0; vi < sys->nv; vi++)
     {
         // the covariance matrix of all outgoing edges in the 1-ring
         float Si[9] = {};
@@ -286,7 +256,7 @@ static void update_rotations(
         Vi[8] = Sv33.f;
 
         // Ri = Vi * Ui^T
-        float* Ri = &Ris[vi * 9];
+        float* Ri = &sys->Ris[vi * 9];
         Ri[0] = Vi[0] * Ui[0] + Vi[3] * Ui[3] + Vi[6] * Ui[6];
         Ri[1] = Vi[1] * Ui[0] + Vi[4] * Ui[3] + Vi[7] * Ui[6];
         Ri[2] = Vi[2] * Ui[0] + Vi[5] * Ui[3] + Vi[8] * Ui[6];
@@ -309,26 +279,23 @@ static void update_rotations(
 }
 
 static void update_positions(
+    arap_system* sys,
     const float* p_bind_XYZs, 
     float* p_guess_XYZs,
-    int nfree, const int* free_to_vid, const int* vid_to_free,
-    const int* vcs,
     const int* v_hIDs,
     const int* h_vfnpIDs,
-    const float* e_ws,
-    const float* F, float* b,
-    const float* Ris)
+    const float* e_ws)
 {
     // column major, three columns of size n
-    float* bx = &b[nfree * 0];
-    float* by = &b[nfree * 1];
-    float* bz = &b[nfree * 2];
-
+    float* bx = &sys->b[sys->nfree * 0];
+    float* by = &sys->b[sys->nfree * 1];
+    float* bz = &sys->b[sys->nfree * 2];
+    
     // initialize rhs
-    for (int free_i = 0; free_i < nfree; free_i++)
+    for (int free_i = 0; free_i < sys->nfree; free_i++)
     {
         // get VertexID
-        int vi = free_to_vid[free_i];
+        int vi = sys->free_to_vid[free_i];
 
         // summation of neighbors rhs
         float bx_tmp = 0.0f;
@@ -340,8 +307,8 @@ static void update_positions(
             int vj = h_vfnpIDs[4 * curr_hID + 0];
             float wij = e_ws[curr_hID / 2];
 
-            const float* Ri = &Ris[vi * 9];
-            const float* Rj = &Ris[vj * 9];
+            const float* Ri = &sys->Ris[vi * 9];
+            const float* Rj = &sys->Ris[vj * 9];
             const float* pi_bind = &p_bind_XYZs[vi * 3];
             const float* pj_bind = &p_bind_XYZs[vj * 3];
 
@@ -367,7 +334,7 @@ static void update_positions(
                 wij_2 * (Ri_Rj[2] * pi_pj[0] + Ri_Rj[5] * pi_pj[1] + Ri_Rj[8] * pi_pj[2])
             };
 
-            if (vid_to_free[vj] == -1)
+            if (sys->vid_to_free[vj] == -1)
             {
                 // this neighbor is constrained, which means the rhs needs to be fudged
                 // this is because the columns of the constrained vertices are set to zero in the system matrix,
@@ -396,19 +363,21 @@ static void update_positions(
     }
 
     // cholesky solve
-    char uplo = 'L';
-    int n = nfree;
-    int nrhs = 3;
-    float* ap = (float*)F;
-    int ldb = nfree;
-    int info;
-    spptrs_(&uplo, &n, &nrhs, ap, b, &ldb, &info);
-    assert(info == 0);
+    {
+        char uplo = 'L';
+        int n = sys->nfree;
+        int nrhs = 3;
+        float* ap = (float*)sys->F;
+        int ldb = sys->nfree;
+        int info;
+        spptrs_(&uplo, &n, &nrhs, ap, sys->b, &ldb, &info);
+        assert(info == 0);
+    }
 
     // Update new guess
-    for (int free_i = 0; free_i < nfree; free_i++)
+    for (int free_i = 0; free_i < sys->nfree; free_i++)
     {
-        int vi = free_to_vid[free_i];
+        int vi = sys->free_to_vid[free_i];
         p_guess_XYZs[3 * vi + 0] = bx[free_i];
         p_guess_XYZs[3 * vi + 1] = by[free_i];
         p_guess_XYZs[3 * vi + 2] = bz[free_i];
@@ -416,71 +385,30 @@ static void update_positions(
 }
 
 void arap(
-    int nv, const float* p_bind_XYZs, float* p_guess_XYZs,
-    const int* vcs,
+    arap_system* sys,
+    const float* p_bind_XYZs, float* p_guess_XYZs,
     const int* v_hIDs,
     const int* h_vfnpIDs,
     const float* e_ws,
-    const float* F,
     int ni)
 {
-    // count the number of free vertices
-    int nfree = 0;
-    for (int i = 0; i < nv; i++)
-    {
-        if (!vcs[i])
-            nfree++;
-    }
-
-    // list of free vertices (free vertex index -> vertexID)
-    int* free_to_vid = (int*)malloc(sizeof(int) * nfree);
-    // reverse mapping (vertexID -> free vertex index)
-    int* vid_to_free = (int*)malloc(sizeof(int) * nv);
-    for (int i = 0, curr_free = 0; i < nv; i++)
-    {
-        if (vcs[i])
-        {
-            vid_to_free[i] = -1;
-            continue;
-        }
-
-        free_to_vid[curr_free] = i;
-        vid_to_free[i] = curr_free;
-        curr_free++;
-    }
-
-    // rotation matrices computed at each iteration
-    float* Ris = (float*)malloc(sizeof(float) * 9 * nv);
-
-    // storage for solver
-    float* b = (float*)malloc(sizeof(float) * 3 * nfree);
-
     // iteratively refine guess by optimizing rotation and position
     for (int iter = 0; iter < ni; iter++)
     {
         update_rotations(
-            nv,
+            sys,
             p_bind_XYZs, 
             p_guess_XYZs,
             v_hIDs,
             h_vfnpIDs, 
-            e_ws,
-            Ris);
+            e_ws);
 
         update_positions(
+            sys,
             p_bind_XYZs, 
             p_guess_XYZs,
-            nfree, free_to_vid, vid_to_free,
-            vcs,
             v_hIDs,
             h_vfnpIDs, 
-            e_ws,
-            F, b,
-            Ris);
+            e_ws);
     }
-    
-    free(vid_to_free);
-    free(free_to_vid);
-    free(b);
-    free(Ris);
 }
